@@ -65,3 +65,14 @@ DESCRIPTION:
 - Intercept virtual filesystem stat calls: statfs, __statfs, and statvfs.
 - Resolves apt-key keyring inspection failure where cmp invoked __open_2 on /data/data/com.termux/files/usr/etc/apt/trusted.gpg.d/*.gpg and was rejected with EACCES (Permission denied).
 - Eliminates "file has an unsupported filetype" and "repository is not signed" errors during apt update and pkg install operations.
+
+--------------------------------------------------------------------------------
+COMMIT 7: [b8c52f6] - 2026-10-06 02:50:00 +0530
+MESSAGE: "Restrict build variants and NDK filters to arm64-v8a ABI only, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Configure splits.abi in app/build.gradle to include only 'arm64-v8a' and disable universalApk generation.
+- Configure externalNativeBuild.ndkBuild.abiFilters in app/build.gradle to 'arm64-v8a'.
+- Restrict ndk.abiFilters in terminal-emulator and termux-shared to 'arm64-v8a'.
+- Eliminates compilation of x86, x86_64, and armeabi-v7a architectures, producing solely arm64-v8a APK.
+
