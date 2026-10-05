@@ -88,6 +88,17 @@ DESCRIPTION:
 - Intercept stat64, lstat64, fstatat64, lchmod, lchown, and utimensat.
 - Protect parent directory operations from returning EPERM/EACCES during unpack and cleanup in chmod, fchmodat, lchmod, chown, fchownat, lchown, utime, utimes, utimensat, unlink, unlinkat, and rmdir.
 - Expand ensure_env() to rewrite all target prefixes in PATH.
-- Verified on User 10 (Island) via ADB: dpkg -i, pkg install tree, apt-get install --reinstall tree, and pkg install bat all complete with 100% success and exit code 0.
+--------------------------------------------------------------------------------
+COMMIT 9: [02f2153] - 2026-10-06 04:00:00 +0530
+MESSAGE: "Fix termux-setup-storage, user broadcast routing, and ActivityManager interposition, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Export TERMUX__USER_ID in TermuxAppShellEnvironment and TermuxShellEnvironment matching the active user ID (uid / 100000), resolving SecurityException: Permission Denial when shell scripts dispatch am broadcasts.
+- Register legacy broadcast actions (com.termux.app.reload_style, com.termux.app.request_storage_permissions, com.termux.app.notify_app_crash) and handle legacy extras in TermuxActivity.
+- Support legacy actions in TermuxService (com.termux.service_stop, com.termux.service_wake_lock, com.termux.service_wake_unlock, com.termux.service_execute).
+- Add patchBinScriptsIfNeeded() to TermuxInstaller to rewrite legacy package references (com.termux -> com.termex) in $PREFIX/bin/termux-* scripts and delegate $PREFIX/bin/am to /system/bin/am, eliminating ART Permission Denial: not allowed to send as package com.termux in am.apk.
+- Implement sanitize_exec_argv() in termex-redirect.c to dynamically intercept am / app_process executions, rewriting com.termux arguments to com.termex and correcting --user 0 to the calling user ID.
+- Verified on User 10 (Island) via live terminal: termux-setup-storage rebuilds ~/storage symlinks (shared, downloads, dcim, documents, pictures, music, movies, audiobooks, podcasts, external-0, media-0) pointing to /storage/emulated/10 without errors.
+
 
 

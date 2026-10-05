@@ -62,6 +62,8 @@ public class TermuxAppShellEnvironment {
     public static final String ENV_TERMUX_APP__SE_INFO = TERMUX_APP_ENV_PREFIX + "SE_INFO";
     /** Environment variable for the Termux app user id. */
     public static final String ENV_TERMUX_APP__USER_ID = TERMUX_APP_ENV_PREFIX + "USER_ID";
+    /** Environment variable for the Termux user id used by scripts like termux-setup-storage. */
+    public static final String ENV_TERMUX__USER_ID = TermuxConstants.TERMUX_ENV_PREFIX_ROOT + "__USER_ID";
     /** Environment variable for the Termux app profile owner. */
     public static final String ENV_TERMUX_APP__PROFILE_OWNER = TERMUX_APP_ENV_PREFIX + "PROFILE_OWNER";
 
@@ -142,8 +144,11 @@ public class TermuxAppShellEnvironment {
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__SE_INFO, PackageUtils.getApplicationInfoSeInfoForPackage(applicationInfo) +
                 (DataUtils.isNullOrEmpty(seInfoUser) ? "" : seInfoUser));
 
-            if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
-                ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__USER_ID, String.valueOf(PackageUtils.getUserIdForPackage(currentPackageContext)));
+            if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                String userId = String.valueOf(PackageUtils.getUserIdForPackage(currentPackageContext));
+                ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__USER_ID, userId);
+                ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX__USER_ID, userId);
+            }
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__PROFILE_OWNER, PackageUtils.getProfileOwnerPackageNameForUser(currentPackageContext));
         }
 

@@ -111,6 +111,10 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
             }
         }
 
+        int userId = currentPackageContext.getApplicationInfo() != null ? currentPackageContext.getApplicationInfo().uid / 100000 : 0;
+        environment.put("TERMUX__USER_ID", String.valueOf(userId));
+        environment.put("TERMUX_APP__USER_ID", String.valueOf(userId));
+
         return environment;
     }
 

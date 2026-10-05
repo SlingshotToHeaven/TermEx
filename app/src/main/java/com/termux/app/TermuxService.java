@@ -138,18 +138,22 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         if (action != null) {
             switch (action) {
+                case "com.termux.service_stop":
                 case TERMUX_SERVICE.ACTION_STOP_SERVICE:
                     Logger.logDebug(LOG_TAG, "ACTION_STOP_SERVICE intent received");
                     actionStopService();
                     break;
+                case "com.termux.service_wake_lock":
                 case TERMUX_SERVICE.ACTION_WAKE_LOCK:
                     Logger.logDebug(LOG_TAG, "ACTION_WAKE_LOCK intent received");
                     actionAcquireWakeLock();
                     break;
+                case "com.termux.service_wake_unlock":
                 case TERMUX_SERVICE.ACTION_WAKE_UNLOCK:
                     Logger.logDebug(LOG_TAG, "ACTION_WAKE_UNLOCK intent received");
                     actionReleaseWakeLock(true);
                     break;
+                case "com.termux.service_execute":
                 case TERMUX_SERVICE.ACTION_SERVICE_EXECUTE:
                     Logger.logDebug(LOG_TAG, "ACTION_SERVICE_EXECUTE intent received");
                     actionServiceExecute(intent);

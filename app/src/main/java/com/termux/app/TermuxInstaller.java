@@ -212,6 +212,14 @@ final class TermuxInstaller {
                                                 content = content.replace("export LD_PRELOAD=\"", "export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD }");
                                                 modified = true;
                                             }
+                                            if (zipEntryName.equals("bin/am")) {
+                                                content = "#!/system/bin/sh\nif [ -x /system/bin/am ]; then\n    exec /system/bin/am \"$@\"\nfi\n";
+                                                modified = true;
+                                            }
+                                            if (zipEntryName.startsWith("bin/termux-") && content.contains("com.termux")) {
+                                                content = content.replace("com.termux", TermuxConstants.TERMUX_PACKAGE_NAME);
+                                                modified = true;
+                                            }
                                             if (modified) {
                                                 entryBytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                                             }
@@ -424,6 +432,52 @@ final class TermuxInstaller {
             }
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Failed to install libtermex-redirect.so: " + e.getMessage());
+        }
+
+        patchBinScriptsIfNeeded();
+    }
+
+    public static void patchBinScriptsIfNeeded() {
+        try {
+            File binDir = new File(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+            if (!binDir.exists() || !binDir.isDirectory()) return;
+
+            File amFile = new File(binDir, "am");
+            if (amFile.exists() && amFile.isFile()) {
+                String amScript = "#!/system/bin/sh\nif [ -x /system/bin/am ]; then\n    exec /system/bin/am \"$@\"\nfi\n";
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(amFile)) {
+                    fos.write(amScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                //noinspection OctalInteger
+                android.system.Os.chmod(amFile.getAbsolutePath(), 0700);
+            }
+
+            File[] files = binDir.listFiles((dir, name) -> name.startsWith("termux-"));
+            if (files == null) return;
+
+            for (File file : files) {
+                if (!file.isFile() || !file.canRead() || !file.canWrite()) continue;
+                try {
+                    byte[] bytes = new byte[(int) file.length()];
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+                        int read = 0;
+                        while (read < bytes.length) {
+                            int r = fis.read(bytes, read, bytes.length - read);
+                            if (r <= 0) break;
+                            read += r;
+                        }
+                    }
+                    String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                    if (content.contains("com.termux")) {
+                        content = content.replace("com.termux", TermuxConstants.TERMUX_PACKAGE_NAME);
+                        try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
+                            fos.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to patch bin scripts: " + e.getMessage());
         }
     }
 

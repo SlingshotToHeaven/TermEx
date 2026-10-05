@@ -918,8 +918,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void registerTermuxActivityBroadcastReceiver() {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(TERMUX_ACTIVITY.ACTION_NOTIFY_APP_CRASH);
+        intentFilter.addAction("com.termux.app.notify_app_crash");
         intentFilter.addAction(TERMUX_ACTIVITY.ACTION_RELOAD_STYLE);
+        intentFilter.addAction("com.termux.app.reload_style");
         intentFilter.addAction(TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS);
+        intentFilter.addAction("com.termux.app.request_storage_permissions");
 
         registerReceiver(mTermuxActivityBroadcastReceiver, intentFilter);
     }
@@ -932,8 +935,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (intent == null) return;
 
         String extraReloadStyle = intent.getStringExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE);
+        if (extraReloadStyle == null) {
+            extraReloadStyle = intent.getStringExtra("com.termux.app.reload_style");
+        }
         if ("storage".equals(extraReloadStyle)) {
             intent.removeExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE);
+            intent.removeExtra("com.termux.app.reload_style");
             intent.setAction(TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS);
         }
     }
@@ -943,23 +950,32 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         public void onReceive(Context context, Intent intent) {
             if (intent == null) return;
 
-            if (mIsVisible) {
-                fixTermuxActivityBroadcastReceiverIntent(intent);
+            fixTermuxActivityBroadcastReceiverIntent(intent);
 
-                switch (intent.getAction()) {
-                    case TERMUX_ACTIVITY.ACTION_NOTIFY_APP_CRASH:
-                        Logger.logDebug(LOG_TAG, "Received intent to notify app crash");
-                        TermuxCrashUtils.notifyAppCrashFromCrashLogFile(context, LOG_TAG);
-                        return;
-                    case TERMUX_ACTIVITY.ACTION_RELOAD_STYLE:
-                        Logger.logDebug(LOG_TAG, "Received intent to reload styling");
-                        reloadActivityStyling(intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_RECREATE_ACTIVITY, true));
-                        return;
-                    case TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS:
-                        Logger.logDebug(LOG_TAG, "Received intent to request storage permissions");
-                        requestStoragePermission(false);
-                        return;
-                    default:
+            String action = intent.getAction();
+            if (action == null) return;
+
+            if (mIsVisible) {
+                if (TERMUX_ACTIVITY.ACTION_NOTIFY_APP_CRASH.equals(action) || "com.termux.app.notify_app_crash".equals(action)) {
+                    Logger.logDebug(LOG_TAG, "Received intent to notify app crash");
+                    TermuxCrashUtils.notifyAppCrashFromCrashLogFile(context, LOG_TAG);
+                    return;
+                } else if (TERMUX_ACTIVITY.ACTION_RELOAD_STYLE.equals(action) || "com.termux.app.reload_style".equals(action)) {
+                    Logger.logDebug(LOG_TAG, "Received intent to reload styling");
+                    reloadActivityStyling(intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_RECREATE_ACTIVITY, true));
+                    return;
+                } else if (TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS.equals(action) || "com.termux.app.request_storage_permissions".equals(action)) {
+                    Logger.logDebug(LOG_TAG, "Received intent to request storage permissions");
+                    requestStoragePermission(false);
+                    return;
+                }
+            } else {
+                if (TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS.equals(action) || "com.termux.app.request_storage_permissions".equals(action)) {
+                    Logger.logDebug(LOG_TAG, "Received intent to request storage permissions while invisible");
+                    if (PermissionUtils.checkStoragePermission(context, PermissionUtils.isLegacyExternalStoragePossible(context))) {
+                        TermuxInstaller.setupStorageSymlinks(context);
+                    }
+                    return;
                 }
             }
         }

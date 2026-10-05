@@ -821,9 +821,89 @@ static const char* resolve_in_path(const char* file, char* buffer, size_t bufsiz
     return file;
 }
 
+static char user_id_str[16] = {0};
+
+static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* modified_out) {
+    if (modified_out) *modified_out = 0;
+    if (!argv || !rpath) return (char**)argv;
+
+    int is_am = 0;
+    const char* base = strrchr(rpath, '/');
+    const char* prog = base ? base + 1 : rpath;
+    if (strcmp(prog, "am") == 0 || strcmp(prog, "app_process") == 0 ||
+        strcmp(prog, "app_process64") == 0 || strcmp(prog, "app_process32") == 0) {
+        is_am = 1;
+    }
+    if (!is_am && argv[0]) {
+        const char* a0 = strrchr(argv[0], '/');
+        const char* p0 = a0 ? a0 + 1 : argv[0];
+        if (strcmp(p0, "am") == 0) is_am = 1;
+    }
+
+    int user_id = getuid() / 100000;
+    int argc = 0;
+    while (argv[argc]) argc++;
+
+    int needs_mod = 0;
+    for (int i = 0; i < argc; i++) {
+        if (is_am && user_id > 0 && strcmp(argv[i], "--user") == 0 && i + 1 < argc && strcmp(argv[i+1], "0") == 0) {
+            needs_mod = 1;
+        }
+        if (strstr(argv[i], "com.termux")) {
+            needs_mod = 1;
+        }
+    }
+
+    if (!needs_mod) return (char**)argv;
+
+    char** new_argv = malloc((argc + 1) * sizeof(char*));
+    if (!new_argv) return (char**)argv;
+
+    snprintf(user_id_str, sizeof(user_id_str), "%d", user_id);
+
+    const char* real_pkg = "com.termex";
+    if (current_app_dir_len > 0) {
+        const char* slash = strrchr(current_app_dir, '/');
+        if (slash && *(slash + 1)) real_pkg = slash + 1;
+    }
+
+    for (int i = 0; i < argc; i++) {
+        if (is_am && user_id > 0 && strcmp(argv[i], "0") == 0 && i > 0 && strcmp(argv[i-1], "--user") == 0) {
+            new_argv[i] = user_id_str;
+        } else if (strstr(argv[i], "com.termux")) {
+            char buf[1024];
+            const char* src = argv[i];
+            char* dst = buf;
+            size_t remain = sizeof(buf) - 1;
+            while (*src && remain > 0) {
+                if (strncmp(src, "com.termux", 10) == 0) {
+                    size_t plen = strlen(real_pkg);
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, real_pkg, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += 10;
+                } else {
+                    *dst++ = *src++;
+                    remain--;
+                }
+            }
+            *dst = '\0';
+            new_argv[i] = strdup(buf);
+        } else {
+            new_argv[i] = argv[i];
+        }
+    }
+    new_argv[argc] = NULL;
+    if (modified_out) *modified_out = 1;
+    return new_argv;
+}
+
 // Helper to handle shebang in exec
 static int handle_shebang_exec(const char* rpath, char* const argv[], char* const envp[], orig_open_t o_open, int (*exec_func)(const char*, char* const[], char* const[])) {
     char** safe_envp = ensure_env(envp);
+    int mod_argv = 0;
+    char** eff_argv = sanitize_exec_argv(rpath, argv, &mod_argv);
     int fd = o_open ? o_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
     if (fd >= 0) {
         char header[256];
@@ -839,21 +919,36 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
             const char* rinterp = redirect_path(interp, interp_buf, sizeof(interp_buf));
             if (rinterp != interp) {
                 int argc = 0;
-                while (argv && argv[argc]) argc++;
+                while (eff_argv && eff_argv[argc]) argc++;
                 char** new_argv = malloc((argc + 2) * sizeof(char*));
                 if (new_argv) {
                     new_argv[0] = (char*)rinterp;
                     new_argv[1] = (char*)rpath;
-                    for (int i = 1; i < argc; i++) new_argv[i + 1] = argv[i];
+                    for (int i = 1; i < argc; i++) new_argv[i + 1] = eff_argv[i];
                     new_argv[argc + 1] = NULL;
                     int ret = exec_func(rinterp, new_argv, safe_envp);
                     free(new_argv);
+                    if (mod_argv) {
+                        for (int i = 0; i < argc; i++) {
+                            if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                        }
+                        free(eff_argv);
+                    }
                     return ret;
                 }
             }
         }
     }
-    return exec_func(rpath, argv, safe_envp);
+    int ret = exec_func(rpath, eff_argv, safe_envp);
+    if (mod_argv) {
+        int argc = 0;
+        while (eff_argv && eff_argv[argc]) argc++;
+        for (int i = 0; i < argc; i++) {
+            if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+        }
+        free(eff_argv);
+    }
+    return ret;
 }
 
 // execve
