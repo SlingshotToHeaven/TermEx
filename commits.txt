@@ -3,7 +3,7 @@ TermEx - PROJECT COMMIT CHRONICLE & CHANGELOG
 ================================================================================
 
 --------------------------------------------------------------------------------
-COMMIT 1: [CURRENT] - 2026-10-06 00:27:00 +0530
+COMMIT 1: [3e6fed4] - 2026-10-06 00:27:00 +0530
 MESSAGE: "Initialize TermEx baseline repository and import seed rules, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -12,3 +12,15 @@ DESCRIPTION:
 - Move companion seed prompts into .seed_prompt_files/.
 - Establish root commits.txt chronicle following two-phase commit discipline.
 - Establish original Termux codebase baseline into TermEx root workspace.
+
+--------------------------------------------------------------------------------
+COMMIT 2: [PENDING] - 2026-10-06 00:31:00 +0530
+MESSAGE: "Rename package to com.termex and app name to TermEx, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Set applicationId to com.termex in app/build.gradle.
+- Update manifestPlaceholders: TERMUX_PACKAGE_NAME = "com.termex", TERMUX_APP_NAME = "TermEx".
+- Update TermuxConstants: TERMUX_PACKAGE_NAME = "com.termex", TERMUX_APP_NAME = "TermEx".
+- Update string entity definitions for TERMUX_PACKAGE_NAME, TERMUX_APP_NAME, and TERMUX_PREFIX_DIR_PATH in app and termux-shared resources.
+- Update shortcuts.xml targetPackage and failsafe session extra to com.termex.
+- Wire signing configuration in app/build.gradle to reference ~/keys/release.keystore and ~/keys/debug.keystore.
