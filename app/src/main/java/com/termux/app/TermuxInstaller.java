@@ -66,24 +66,13 @@ final class TermuxInstaller {
         String bootstrapErrorMessage;
         Error filesDirectoryAccessibleError;
 
+        // Ensure dynamic paths are initialized for the current user
+        TermuxConstants.init(activity);
+
         // This will also call Context.getFilesDir(), which should ensure that termux files directory
         // is created if it does not already exist
         filesDirectoryAccessibleError = TermuxFileUtils.isTermuxFilesDirectoryAccessible(activity, true, true);
         boolean isFilesDirectoryAccessible = filesDirectoryAccessibleError == null;
-
-        // Termux can only be run as the primary user (device owner) since only that
-        // account has the expected file system paths. Verify that:
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !PackageUtils.isCurrentUserThePrimaryUser(activity)) {
-            bootstrapErrorMessage = activity.getString(R.string.bootstrap_error_not_primary_user_message,
-                MarkdownUtils.getMarkdownCodeForString(TERMUX_PREFIX_DIR_PATH, false));
-            Logger.logError(LOG_TAG, "isFilesDirectoryAccessible: " + isFilesDirectoryAccessible);
-            Logger.logError(LOG_TAG, bootstrapErrorMessage);
-            sendBootstrapCrashReportNotification(activity, bootstrapErrorMessage);
-            MessageDialogUtils.exitAppWithErrorMessage(activity,
-                activity.getString(R.string.bootstrap_error_title),
-                bootstrapErrorMessage);
-            return;
-        }
 
         if (!isFilesDirectoryAccessible) {
             bootstrapErrorMessage = Error.getMinimalErrorString(filesDirectoryAccessibleError);

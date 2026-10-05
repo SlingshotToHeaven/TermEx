@@ -26,6 +26,9 @@ public class TermuxApplication extends Application {
 
         Context context = getApplicationContext();
 
+        // Initialize dynamic paths for current user (supports secondary users, work profiles, etc.)
+        TermuxConstants.init(context);
+
         // Set crash handler for the app
         TermuxCrashUtils.setDefaultCrashHandler(this);
 

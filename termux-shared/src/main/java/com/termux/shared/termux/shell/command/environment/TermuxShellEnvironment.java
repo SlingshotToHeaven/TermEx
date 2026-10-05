@@ -4,6 +4,7 @@ import android.content.Context;
 
 import androidx.annotation.NonNull;
 
+import com.termux.shared.android.PackageUtils;
 import com.termux.shared.errors.Error;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.logger.Logger;
@@ -64,6 +65,9 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
     @Override
     public HashMap<String, String> getEnvironment(@NonNull Context currentPackageContext, boolean isFailSafe) {
 
+        // Ensure dynamic paths are initialized for the current user context
+        TermuxConstants.init(currentPackageContext);
+
         // Termux environment builds upon the Android environment
         HashMap<String, String> environment = super.getEnvironment(currentPackageContext, isFailSafe);
 
@@ -86,9 +90,14 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
                 environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets");
                 environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
             } else {
-                // Termux binaries on Android 7+ rely on DT_RUNPATH, so LD_LIBRARY_PATH should be unset by default
                 environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
-                environment.remove(ENV_LD_LIBRARY_PATH);
+                if (PackageUtils.isCurrentUserThePrimaryUser(currentPackageContext)) {
+                    // Termux binaries on Android 7+ rely on DT_RUNPATH for user 0, so LD_LIBRARY_PATH is unset by default
+                    environment.remove(ENV_LD_LIBRARY_PATH);
+                } else {
+                    // For secondary users, point LD_LIBRARY_PATH to the user's isolated prefix lib directory
+                    environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+                }
             }
         }
 

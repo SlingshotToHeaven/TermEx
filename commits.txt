@@ -25,7 +25,7 @@ DESCRIPTION:
 - Update shortcuts.xml targetPackage and failsafe session extra to com.termex.
 - Wire signing configuration in app/build.gradle to reference ~/keys/release.keystore and ~/keys/debug.keystore.
 --------------------------------------------------------------------------------
-COMMIT 3: [PENDING] - 2026-10-06 00:57:00 +0530
+COMMIT 3: [4d94c3a] - 2026-10-06 00:57:00 +0530
 MESSAGE: "Enable multi-user support with dynamic path resolution, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
