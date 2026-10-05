@@ -67,7 +67,7 @@ DESCRIPTION:
 - Eliminates "file has an unsupported filetype" and "repository is not signed" errors during apt update and pkg install operations.
 
 --------------------------------------------------------------------------------
-COMMIT 7: [b8c52f6] - 2026-10-06 02:50:00 +0530
+COMMIT 7: [cc58ad7] - 2026-10-06 02:50:00 +0530
 MESSAGE: "Restrict build variants and NDK filters to arm64-v8a ABI only, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
