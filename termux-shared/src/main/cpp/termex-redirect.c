@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <utime.h>
+#include <sys/vfs.h>
+#include <sys/statvfs.h>
 
 static const char TARGET_PREFIX1[] = "/data/data/com.termux";
 static const size_t TARGET_LEN1 = sizeof(TARGET_PREFIX1) - 1;
@@ -114,6 +116,35 @@ int openat(int dirfd, const char* pathname, int flags, ...) {
     return orig(dirfd, rpath, flags);
 }
 
+// __open_2
+typedef int (*orig___open_2_t)(const char*, int);
+int __open_2(const char* pathname, int flags) {
+    static orig___open_2_t orig = NULL;
+    if (!orig) orig = (orig___open_2_t)dlsym(RTLD_NEXT, "__open_2");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), flags);
+}
+
+// __openat_2
+typedef int (*orig___openat_2_t)(int, const char*, int);
+int __openat_2(int dirfd, const char* pathname, int flags) {
+    static orig___openat_2_t orig = NULL;
+    if (!orig) orig = (orig___openat_2_t)dlsym(RTLD_NEXT, "__openat_2");
+    char buf[1024];
+    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
+    return orig(dirfd, rpath, flags);
+}
+
+// __openat
+typedef int (*orig___openat_t)(int, const char*, int, int);
+int __openat(int dirfd, const char* pathname, int flags, int mode) {
+    static orig___openat_t orig = NULL;
+    if (!orig) orig = (orig___openat_t)dlsym(RTLD_NEXT, "__openat");
+    char buf[1024];
+    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
+    return orig(dirfd, rpath, flags, mode);
+}
+
 // creat
 typedef int (*orig_creat_t)(const char*, mode_t);
 int creat(const char* pathname, mode_t mode) {
@@ -178,6 +209,34 @@ int fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
     return orig(dirfd, rpath, statbuf, flags);
 }
 
+// statfs
+typedef int (*orig_statfs_t)(const char*, struct statfs*);
+int statfs(const char* path, struct statfs* buf) {
+    static orig_statfs_t orig = NULL;
+    if (!orig) orig = (orig_statfs_t)dlsym(RTLD_NEXT, "statfs");
+    char tbuf[1024];
+    return orig(redirect_path(path, tbuf, sizeof(tbuf)), buf);
+}
+
+// __statfs
+typedef int (*orig___statfs_t)(const char*, struct statfs*);
+int __statfs(const char* path, struct statfs* buf) {
+    static orig___statfs_t orig = NULL;
+    if (!orig) orig = (orig___statfs_t)dlsym(RTLD_NEXT, "__statfs");
+    char tbuf[1024];
+    return orig(redirect_path(path, tbuf, sizeof(tbuf)), buf);
+}
+
+// statvfs
+typedef int (*orig_statvfs_t)(const char*, struct statvfs*);
+int statvfs(const char* path, struct statvfs* buf) {
+    static orig_statvfs_t orig = NULL;
+    if (!orig) orig = (orig_statvfs_t)dlsym(RTLD_NEXT, "statvfs");
+    char tbuf[1024];
+    return orig(redirect_path(path, tbuf, sizeof(tbuf)), buf);
+}
+
+
 // access
 typedef int (*orig_access_t)(const char*, int);
 int access(const char* pathname, int mode) {
@@ -214,6 +273,25 @@ ssize_t readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
     char tbuf[1024];
     const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, tbuf, sizeof(tbuf)) : pathname;
     return orig(dirfd, rpath, buf, bufsiz);
+}
+
+// __readlink_chk
+typedef ssize_t (*orig___readlink_chk_t)(const char*, char*, size_t, size_t);
+ssize_t __readlink_chk(const char* pathname, char* buf, size_t bufsiz, size_t buflen) {
+    static orig___readlink_chk_t orig = NULL;
+    if (!orig) orig = (orig___readlink_chk_t)dlsym(RTLD_NEXT, "__readlink_chk");
+    char tbuf[1024];
+    return orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
+}
+
+// __readlinkat_chk
+typedef ssize_t (*orig___readlinkat_chk_t)(int, const char*, char*, size_t, size_t);
+ssize_t __readlinkat_chk(int dirfd, const char* pathname, char* buf, size_t bufsiz, size_t buflen) {
+    static orig___readlinkat_chk_t orig = NULL;
+    if (!orig) orig = (orig___readlinkat_chk_t)dlsym(RTLD_NEXT, "__readlinkat_chk");
+    char tbuf[1024];
+    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, tbuf, sizeof(tbuf)) : pathname;
+    return orig(dirfd, rpath, buf, bufsiz, buflen);
 }
 
 // realpath

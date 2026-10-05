@@ -55,3 +55,13 @@ DESCRIPTION:
 - Automatically copy libtermex-redirect.so from APK nativeLibraryDir into $PREFIX/lib/libtermex-redirect.so upon bootstrap installation.
 - Automatically configure LD_PRELOAD and TERMEX_REAL_APP_DIR in TermuxShellEnvironment for secondary user profiles.
 - Verified on User 10 (Island) via ADB: bootstrap extracts completely, second stage packages (coreutils, nano, termux-exec, util-linux) postinst scripts complete with 100% success, dpkg and apt list execute cleanly, and interactive terminal session runs with full command execution verified via screenshot.
+
+--------------------------------------------------------------------------------
+COMMIT 6: [bcb6e98] - 2026-10-06 02:40:00 +0530
+MESSAGE: "Hook Bionic fortify and VFS functions in native redirection library, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Intercept Android Bionic _FORTIFY_SOURCE libc wrappers: __open_2, __openat_2, __openat, __readlink_chk, and __readlinkat_chk in termex-redirect.c.
+- Intercept virtual filesystem stat calls: statfs, __statfs, and statvfs.
+- Resolves apt-key keyring inspection failure where cmp invoked __open_2 on /data/data/com.termux/files/usr/etc/apt/trusted.gpg.d/*.gpg and was rejected with EACCES (Permission denied).
+- Eliminates "file has an unsupported filetype" and "repository is not signed" errors during apt update and pkg install operations.
