@@ -89,7 +89,7 @@ DESCRIPTION:
 - Protect parent directory operations from returning EPERM/EACCES during unpack and cleanup in chmod, fchmodat, lchmod, chown, fchownat, lchown, utime, utimes, utimensat, unlink, unlinkat, and rmdir.
 - Expand ensure_env() to rewrite all target prefixes in PATH.
 --------------------------------------------------------------------------------
-COMMIT 9: [02f2153] - 2026-10-06 04:00:00 +0530
+COMMIT 9: [40ef319] - 2026-10-06 04:00:00 +0530
 MESSAGE: "Fix termux-setup-storage, user broadcast routing, and ActivityManager interposition, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
