@@ -1,0 +1,14 @@
+================================================================================
+TermEx - PROJECT COMMIT CHRONICLE & CHANGELOG
+================================================================================
+
+--------------------------------------------------------------------------------
+COMMIT 1: [CURRENT] - 2026-10-06 00:27:00 +0530
+MESSAGE: "Initialize TermEx baseline repository and import seed rules, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Initialize clean Git repository on branch main.
+- Ingest companion seed prompts and code of conduct governance charter.
+- Move companion seed prompts into .seed_prompt_files/.
+- Establish root commits.txt chronicle following two-phase commit discipline.
+- Establish original Termux codebase baseline into TermEx root workspace.

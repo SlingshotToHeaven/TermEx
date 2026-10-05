@@ -1,0 +1,2 @@
+if its an android apps project, ~/keys/release.keystore(alias = 'release', password = '[</({=})$>]' and ~/keys/debug.keystore, (default debug key as usual) should be used to sign accrodingly wheather debug or release apk.
+

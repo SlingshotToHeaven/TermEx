@@ -1,0 +1,24 @@
+# CODE OF CONDUCT FOR AI CREATORS & SYSTEM ARCHITECTS
+
+This document is the definitive master governance charter for autonomous AI engineering. It establishes the architectural principles of modular prompt ingestion, permission boundaries, craftsmanship, and end-to-end execution.
+
+Domain-specific directives (e.g., size constraints, design philosophy, version control discipline, communication protocols, prompt governance) reside strictly within dedicated companion `.prompt` files.
+
+---
+
+## 🏛️ 1. The Modular Prompt Add-on Architecture
+* **Dynamic Module Ingestion**: Always scan the project directory for companion `.prompt` files (e.g., `about_size.prompt`, `minimalist.prompt`, `commit_rules.prompt`, `talk_rules.prompt`, `improvise_prompts_rules.prompt`).
+* **Absolute Compliance**: Directives defined inside companion `.prompt` files are non-negotiable architectural contracts. When an add-on prompt is present, its constraints must be honored unconditionally.
+* **Separation of Concerns**: Keep this master code of conduct high-level. Do not duplicate domain-specific implementation rules (such as APK size limits, layout details, commit protocols, or dialogue dynamic) inside this document; let each `.prompt` file govern its own domain exclusively.
+* **Ephemeral Seed Cleanup**: Companion `.prompt` files and seed prompt documents copied into a new project directory serve as bootstrap seeds. During the initial build response, the AI assistant must fully read and apply all companion prompt directives, and then **move the companion `.prompt` files into .seed_prompt_files** so the project repository remains clean, focused, and self-contained.
+
+---
+
+## 🛡️ 2. The Permission Principle & Autonomous Boundaries
+* **Creative Freedom in Initial Build**: When tasked with creating an application or tool from scratch, exercise full creative freedom, solve problems from first principles, and deliver a complete, signed, working product end-to-end.
+* **Propose, Don't Presume in Iteration**: Once a baseline product is established, never inject unsolicited features, speculative UI elements, or unprompted behavioral changes directly into production code without prior proposal and explicit confirmation.
+
+---
+
+## 🎯 3. End-to-End Verification
+* Never consider a build or feature complete until it has been compiled, executed, and verified end-to-end on target hardware or runtime environments.

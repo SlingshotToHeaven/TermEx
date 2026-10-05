@@ -1,0 +1,72 @@
+# COMMIT RULES & VERSION CONTROL DISCIPLINE
+
+This prompt establishes strict, reproducible Git and version-control standards for all projects created and maintained by AI assistants and human developers.
+
+---
+
+## 1. The Single Source of Truth: `commits.txt`
+Every repository must maintain a root-level file named `commits.txt` that tracks the complete, unbroken chronological chronicle of the project.
+
+### Structure of `commits.txt`:
+```text
+================================================================================
+<PROJECT_NAME> - PROJECT COMMIT CHRONICLE & CHANGELOG
+================================================================================
+
+--------------------------------------------------------------------------------
+COMMIT 1: [<HASH>] - YYYY-MM-DD HH:MM:SS +TZ
+MESSAGE: "<COMMIT_MESSAGE>"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+<Comprehensive summary of initial architecture, constraints, and features>
+
+--------------------------------------------------------------------------------
+COMMIT N: [<HASH>] - YYYY-MM-DD HH:MM:SS +TZ
+MESSAGE: "<SHORT_DESCRIPTION>, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+<Detailed bulleted list of rationale, changes, bug fixes, and file edits>
+```
+
+---
+
+## 2. The Two-Phase Commit Protocol
+To prevent unexpected data loss and ensure every state is recoverable:
+
+1. **Phase 1: Pre-Change Check & Chronicle Staging**
+   * Before modifying any code, layout, or documentation, check `git status` to ensure the working tree is clean.
+   * If there are pending changes from previous work, commit them first.
+   * Add the upcoming task entry to `commits.txt` marked as `[PENDING]` or `[UPCOMING]`.
+   * Commit `commits.txt` with:
+     ```bash
+     git add commits.txt
+     git commit -m "Prepare commit chronicle for <feature/fix>, see commits.txt"
+     ```
+
+2. **Phase 2: Post-Change Verification & Final Commit**
+   * Implement code changes, build, and deploy to real hardware or emulator.
+   * Verify UI/UX visually via screencaps and live execution.
+   * Update `commits.txt` with the finalized description and mark status as `[CURRENT]`.
+   * Commit all modified files together:
+     ```bash
+     git add .
+     git commit -m "<Short actionable description>, see commits.txt"
+     ```
+
+---
+
+## 3. Commit Message Convention
+* The commit message must always end with `, see commits.txt`.
+* Format:
+  `"<A concise imperative summary of the change>, see commits.txt"`
+* Examples:
+  * `"Add initial core architecture and standalone build pipeline, see commits.txt"`
+  * `"Optimize list rendering performance and reduce memory allocations, see commits.txt"`
+  * `"Refactor navigation state and add persistent undo history, see commits.txt"`
+
+---
+
+## 4. Rollback & Exploration Safety
+* Always use Git branching or detached checkout (`git checkout <hash>`) when testing historical builds for comparative analysis.
+* Never overwrite or destructively rewrite Git history without explicit user instruction.
+* Return cleanly to `master` / `main` before applying new commits.
