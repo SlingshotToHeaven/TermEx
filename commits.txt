@@ -24,3 +24,12 @@ DESCRIPTION:
 - Update string entity definitions for TERMUX_PACKAGE_NAME, TERMUX_APP_NAME, and TERMUX_PREFIX_DIR_PATH in app and termux-shared resources.
 - Update shortcuts.xml targetPackage and failsafe session extra to com.termex.
 - Wire signing configuration in app/build.gradle to reference ~/keys/release.keystore and ~/keys/debug.keystore.
+--------------------------------------------------------------------------------
+COMMIT 3: [PENDING] - 2026-10-06 00:57:00 +0530
+MESSAGE: "Enable multi-user support with dynamic path resolution, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Make path constants in TermuxConstants dynamically updatable via init(Context) to support secondary users, work profiles, and parallel spaces.
+- Initialize dynamic paths in TermuxApplication.onCreate() from Context.getFilesDir().
+- Remove artificial primary user check in TermuxInstaller.setupBootstrapIfNeeded().
+- Configure dynamic LD_LIBRARY_PATH in TermuxShellEnvironment for secondary user profiles so Android Bionic linker resolves shared libraries directly from $PREFIX/lib.
