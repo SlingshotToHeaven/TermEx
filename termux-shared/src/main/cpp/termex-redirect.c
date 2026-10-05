@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -20,9 +21,13 @@ static const char TARGET_PREFIX2[] = "/data/user/0/com.termux";
 static const size_t TARGET_LEN2 = sizeof(TARGET_PREFIX2) - 1;
 static const char TARGET_PREFIX3[] = "/data/data/com.termex";
 static const size_t TARGET_LEN3 = sizeof(TARGET_PREFIX3) - 1;
+static const char TARGET_PREFIX4[] = "/data/user/0/com.termex";
+static const size_t TARGET_LEN4 = sizeof(TARGET_PREFIX4) - 1;
 
 static char current_app_dir[512] = {0};
 static size_t current_app_dir_len = 0;
+static char parent_app_dir[512] = {0};
+static size_t parent_app_dir_len = 0;
 
 __attribute__((constructor))
 static void init_redirect(void) {
@@ -59,24 +64,99 @@ static void init_redirect(void) {
         }
     }
     current_app_dir_len = strlen(current_app_dir);
+    if (current_app_dir_len > 0) {
+        char* slash = strrchr(current_app_dir, '/');
+        if (slash && slash > current_app_dir) {
+            size_t plen = slash - current_app_dir;
+            if (plen < sizeof(parent_app_dir)) {
+                strncpy(parent_app_dir, current_app_dir, plen);
+                parent_app_dir[plen] = '\0';
+                parent_app_dir_len = plen;
+            }
+        }
+    }
+}
+
+static inline int is_protected_system_dir(const char* path) {
+    if (!path) return 0;
+    if (parent_app_dir_len > 0 && strcmp(path, parent_app_dir) == 0) return 1;
+    if (strcmp(path, "/data") == 0 || strcmp(path, "/data/") == 0) return 1;
+    if (strcmp(path, "/data/user") == 0 || strcmp(path, "/data/user/") == 0) return 1;
+    return 0;
 }
 
 static const char* redirect_path(const char* path, char* buffer, size_t bufsize) {
     if (!path || current_app_dir_len == 0) return path;
 
-    const char* rest = NULL;
-    if (strncmp(path, TARGET_PREFIX1, TARGET_LEN1) == 0 && (path[TARGET_LEN1] == '/' || path[TARGET_LEN1] == '\0')) {
-        rest = path + TARGET_LEN1;
-    } else if (strncmp(path, TARGET_PREFIX2, TARGET_LEN2) == 0 && (path[TARGET_LEN2] == '/' || path[TARGET_LEN2] == '\0')) {
-        rest = path + TARGET_LEN2;
-    } else if (strncmp(path, TARGET_PREFIX3, TARGET_LEN3) == 0 && (path[TARGET_LEN3] == '/' || path[TARGET_LEN3] == '\0')) {
-        rest = path + TARGET_LEN3;
+    // Fast rejection for non-matching paths
+    char c0 = path[0];
+    if (c0 != '/' && c0 != '.' && c0 != 'd') {
+        return path;
     }
 
-    if (rest) {
-        snprintf(buffer, bufsize, "%s%s", current_app_dir, rest);
-        return buffer;
+    const char* p = path;
+    // Skip leading './' sequences
+    if (p[0] == '.') {
+        while (p[0] == '.' && p[1] == '/') {
+            p += 2;
+            while (*p == '/') p++;
+        }
+        if (*p == '\0') {
+            return path;
+        }
     }
+
+    // Skip leading '/'
+    if (*p == '/') {
+        p++;
+    }
+
+    // Must start with "data/"
+    if (strncmp(p, "data/", 5) != 0) {
+        return path;
+    }
+
+    const char* sub = p + 5; // after "data/"
+
+    // Case 1: "data/data"
+    if (strncmp(sub, "data", 4) == 0) {
+        char c4 = sub[4];
+        if (c4 == '\0' || (c4 == '/' && sub[5] == '\0') || strncmp(sub + 4, ".dpkg-", 6) == 0) {
+            if (parent_app_dir_len > 0) {
+                snprintf(buffer, bufsize, "%s%s", parent_app_dir, c4 == '.' ? sub + 4 : "");
+                return buffer;
+            }
+            return path;
+        }
+        if (c4 == '/') {
+            const char* pkg = sub + 5; // after "data/data/"
+            if ((strncmp(pkg, "com.termux", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) ||
+                (strncmp(pkg, "com.termex", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0))) {
+                snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
+                return buffer;
+            }
+        }
+    }
+    // Case 2: "data/user/0"
+    else if (strncmp(sub, "user/0", 6) == 0) {
+        char c6 = sub[6];
+        if (c6 == '\0' || (c6 == '/' && sub[7] == '\0') || strncmp(sub + 6, ".dpkg-", 6) == 0) {
+            if (parent_app_dir_len > 0) {
+                snprintf(buffer, bufsize, "%s%s", parent_app_dir, c6 == '.' ? sub + 6 : "");
+                return buffer;
+            }
+            return path;
+        }
+        if (c6 == '/') {
+            const char* pkg = sub + 7; // after "data/user/0/"
+            if ((strncmp(pkg, "com.termux", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) ||
+                (strncmp(pkg, "com.termex", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0))) {
+                snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
+                return buffer;
+            }
+        }
+    }
+
     return path;
 }
 
@@ -104,7 +184,7 @@ int openat(int dirfd, const char* pathname, int flags, ...) {
     static orig_openat_t orig = NULL;
     if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0) {
         va_list args;
@@ -131,8 +211,7 @@ int __openat_2(int dirfd, const char* pathname, int flags) {
     static orig___openat_2_t orig = NULL;
     if (!orig) orig = (orig___openat_2_t)dlsym(RTLD_NEXT, "__openat_2");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, flags);
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), flags);
 }
 
 // __openat
@@ -141,8 +220,7 @@ int __openat(int dirfd, const char* pathname, int flags, int mode) {
     static orig___openat_t orig = NULL;
     if (!orig) orig = (orig___openat_t)dlsym(RTLD_NEXT, "__openat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, flags, mode);
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), flags, mode);
 }
 
 // creat
@@ -190,11 +268,29 @@ int stat(const char* pathname, struct stat* statbuf) {
     return orig(redirect_path(pathname, buf, sizeof(buf)), statbuf);
 }
 
+// stat64
+typedef int (*orig_stat64_t)(const char*, struct stat64*);
+int stat64(const char* pathname, struct stat64* statbuf) {
+    static orig_stat64_t orig = NULL;
+    if (!orig) orig = (orig_stat64_t)dlsym(RTLD_NEXT, "stat64");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
 // lstat
 typedef int (*orig_lstat_t)(const char*, struct stat*);
 int lstat(const char* pathname, struct stat* statbuf) {
     static orig_lstat_t orig = NULL;
     if (!orig) orig = (orig_lstat_t)dlsym(RTLD_NEXT, "lstat");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), statbuf);
+}
+
+// lstat64
+typedef int (*orig_lstat64_t)(const char*, struct stat64*);
+int lstat64(const char* pathname, struct stat64* statbuf) {
+    static orig_lstat64_t orig = NULL;
+    if (!orig) orig = (orig_lstat64_t)dlsym(RTLD_NEXT, "lstat64");
     char buf[1024];
     return orig(redirect_path(pathname, buf, sizeof(buf)), statbuf);
 }
@@ -205,8 +301,16 @@ int fstatat(int dirfd, const char* pathname, struct stat* statbuf, int flags) {
     static orig_fstatat_t orig = NULL;
     if (!orig) orig = (orig_fstatat_t)dlsym(RTLD_NEXT, "fstatat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, statbuf, flags);
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), statbuf, flags);
+}
+
+// fstatat64
+typedef int (*orig_fstatat64_t)(int, const char*, struct stat64*, int);
+int fstatat64(int dirfd, const char* pathname, struct stat64* statbuf, int flags) {
+    static orig_fstatat64_t orig = NULL;
+    if (!orig) orig = (orig_fstatat64_t)dlsym(RTLD_NEXT, "fstatat64");
+    char buf[1024];
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), statbuf, flags);
 }
 
 // statfs
@@ -252,8 +356,7 @@ int faccessat(int dirfd, const char* pathname, int mode, int flags) {
     static orig_faccessat_t orig = NULL;
     if (!orig) orig = (orig_faccessat_t)dlsym(RTLD_NEXT, "faccessat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, mode, flags);
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, flags);
 }
 
 // readlink
@@ -271,8 +374,7 @@ ssize_t readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
     static orig_readlinkat_t orig = NULL;
     if (!orig) orig = (orig_readlinkat_t)dlsym(RTLD_NEXT, "readlinkat");
     char tbuf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, tbuf, sizeof(tbuf)) : pathname;
-    return orig(dirfd, rpath, buf, bufsiz);
+    return orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
 }
 
 // __readlink_chk
@@ -290,8 +392,7 @@ ssize_t __readlinkat_chk(int dirfd, const char* pathname, char* buf, size_t bufs
     static orig___readlinkat_chk_t orig = NULL;
     if (!orig) orig = (orig___readlinkat_chk_t)dlsym(RTLD_NEXT, "__readlinkat_chk");
     char tbuf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, tbuf, sizeof(tbuf)) : pathname;
-    return orig(dirfd, rpath, buf, bufsiz, buflen);
+    return orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
 }
 
 // realpath
@@ -336,7 +437,13 @@ int unlink(const char* pathname) {
     static orig_unlink_t orig = NULL;
     if (!orig) orig = (orig_unlink_t)dlsym(RTLD_NEXT, "unlink");
     char buf[1024];
-    return orig(redirect_path(pathname, buf, sizeof(buf)));
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && strstr(rpath, ".dpkg-")) {
+        errno = ENOENT;
+        return -1;
+    }
+    return res;
 }
 
 // unlinkat
@@ -345,8 +452,13 @@ int unlinkat(int dirfd, const char* pathname, int flags) {
     static orig_unlinkat_t orig = NULL;
     if (!orig) orig = (orig_unlinkat_t)dlsym(RTLD_NEXT, "unlinkat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, flags);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(dirfd, rpath, flags);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && strstr(rpath, ".dpkg-")) {
+        errno = ENOENT;
+        return -1;
+    }
+    return res;
 }
 
 // symlink
@@ -364,9 +476,7 @@ int symlinkat(const char* target, int newdirfd, const char* linkpath) {
     static orig_symlinkat_t orig = NULL;
     if (!orig) orig = (orig_symlinkat_t)dlsym(RTLD_NEXT, "symlinkat");
     char buf1[1024], buf2[1024];
-    const char* rtarget = redirect_path(target, buf1, sizeof(buf1));
-    const char* rlink = (newdirfd == AT_FDCWD || (linkpath && linkpath[0] == '/')) ? redirect_path(linkpath, buf2, sizeof(buf2)) : linkpath;
-    return orig(rtarget, newdirfd, rlink);
+    return orig(redirect_path(target, buf1, sizeof(buf1)), newdirfd, redirect_path(linkpath, buf2, sizeof(buf2)));
 }
 
 // link
@@ -384,9 +494,7 @@ int linkat(int olddirfd, const char* oldpath, int newdirfd, const char* newpath,
     static orig_linkat_t orig = NULL;
     if (!orig) orig = (orig_linkat_t)dlsym(RTLD_NEXT, "linkat");
     char buf1[1024], buf2[1024];
-    const char* rold = (olddirfd == AT_FDCWD || (oldpath && oldpath[0] == '/')) ? redirect_path(oldpath, buf1, sizeof(buf1)) : oldpath;
-    const char* rnew = (newdirfd == AT_FDCWD || (newpath && newpath[0] == '/')) ? redirect_path(newpath, buf2, sizeof(buf2)) : newpath;
-    return orig(olddirfd, rold, newdirfd, rnew, flags);
+    return orig(olddirfd, redirect_path(oldpath, buf1, sizeof(buf1)), newdirfd, redirect_path(newpath, buf2, sizeof(buf2)), flags);
 }
 
 // truncate
@@ -404,7 +512,12 @@ int utime(const char* filename, const struct utimbuf* times) {
     static orig_utime_t orig = NULL;
     if (!orig) orig = (orig_utime_t)dlsym(RTLD_NEXT, "utime");
     char buf[1024];
-    return orig(redirect_path(filename, buf, sizeof(buf)), times);
+    const char* rpath = redirect_path(filename, buf, sizeof(buf));
+    int res = orig(rpath, times);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // utimes
@@ -413,7 +526,26 @@ int utimes(const char* filename, const struct timeval times[2]) {
     static orig_utimes_t orig = NULL;
     if (!orig) orig = (orig_utimes_t)dlsym(RTLD_NEXT, "utimes");
     char buf[1024];
-    return orig(redirect_path(filename, buf, sizeof(buf)), times);
+    const char* rpath = redirect_path(filename, buf, sizeof(buf));
+    int res = orig(rpath, times);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
+}
+
+// utimensat
+typedef int (*orig_utimensat_t)(int, const char*, const struct timespec[2], int);
+int utimensat(int dirfd, const char* pathname, const struct timespec times[2], int flags) {
+    static orig_utimensat_t orig = NULL;
+    if (!orig) orig = (orig_utimensat_t)dlsym(RTLD_NEXT, "utimensat");
+    char buf[1024];
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(dirfd, rpath, times, flags);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // rmdir
@@ -422,7 +554,13 @@ int rmdir(const char* pathname) {
     static orig_rmdir_t orig = NULL;
     if (!orig) orig = (orig_rmdir_t)dlsym(RTLD_NEXT, "rmdir");
     char buf[1024];
-    return orig(redirect_path(pathname, buf, sizeof(buf)));
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && strstr(rpath, ".dpkg-")) {
+        errno = ENOENT;
+        return -1;
+    }
+    return res;
 }
 
 // mkdir
@@ -440,8 +578,7 @@ int mkdirat(int dirfd, const char* pathname, mode_t mode) {
     static orig_mkdirat_t orig = NULL;
     if (!orig) orig = (orig_mkdirat_t)dlsym(RTLD_NEXT, "mkdirat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, mode);
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode);
 }
 
 // chmod
@@ -450,7 +587,12 @@ int chmod(const char* pathname, mode_t mode) {
     static orig_chmod_t orig = NULL;
     if (!orig) orig = (orig_chmod_t)dlsym(RTLD_NEXT, "chmod");
     char buf[1024];
-    return orig(redirect_path(pathname, buf, sizeof(buf)), mode);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath, mode);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // fchmodat
@@ -459,8 +601,27 @@ int fchmodat(int dirfd, const char* pathname, mode_t mode, int flags) {
     static orig_fchmodat_t orig = NULL;
     if (!orig) orig = (orig_fchmodat_t)dlsym(RTLD_NEXT, "fchmodat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, mode, flags);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(dirfd, rpath, mode, flags);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
+}
+
+// lchmod
+typedef int (*orig_lchmod_t)(const char*, mode_t);
+int lchmod(const char* pathname, mode_t mode) {
+    static orig_lchmod_t orig = NULL;
+    if (!orig) orig = (orig_lchmod_t)dlsym(RTLD_NEXT, "lchmod");
+    if (!orig) return 0;
+    char buf[1024];
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath, mode);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // chown
@@ -469,7 +630,12 @@ int chown(const char* pathname, uid_t owner, gid_t group) {
     static orig_chown_t orig = NULL;
     if (!orig) orig = (orig_chown_t)dlsym(RTLD_NEXT, "chown");
     char buf[1024];
-    return orig(redirect_path(pathname, buf, sizeof(buf)), owner, group);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath, owner, group);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // fchownat
@@ -478,8 +644,26 @@ int fchownat(int dirfd, const char* pathname, uid_t owner, gid_t group, int flag
     static orig_fchownat_t orig = NULL;
     if (!orig) orig = (orig_fchownat_t)dlsym(RTLD_NEXT, "fchownat");
     char buf[1024];
-    const char* rpath = (dirfd == AT_FDCWD || (pathname && pathname[0] == '/')) ? redirect_path(pathname, buf, sizeof(buf)) : pathname;
-    return orig(dirfd, rpath, owner, group, flags);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(dirfd, rpath, owner, group, flags);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
+}
+
+// lchown
+typedef int (*orig_lchown_t)(const char*, uid_t, gid_t);
+int lchown(const char* pathname, uid_t owner, gid_t group) {
+    static orig_lchown_t orig = NULL;
+    if (!orig) orig = (orig_lchown_t)dlsym(RTLD_NEXT, "lchown");
+    char buf[1024];
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    int res = orig(rpath, owner, group);
+    if (res == -1 && (errno == EPERM || errno == EACCES) && is_protected_system_dir(rpath)) {
+        return 0;
+    }
+    return res;
 }
 
 // rename
@@ -497,9 +681,7 @@ int renameat(int olddirfd, const char* oldpath, int newdirfd, const char* newpat
     static orig_renameat_t orig = NULL;
     if (!orig) orig = (orig_renameat_t)dlsym(RTLD_NEXT, "renameat");
     char buf1[1024], buf2[1024];
-    const char* rold = (olddirfd == AT_FDCWD || (oldpath && oldpath[0] == '/')) ? redirect_path(oldpath, buf1, sizeof(buf1)) : oldpath;
-    const char* rnew = (newdirfd == AT_FDCWD || (newpath && newpath[0] == '/')) ? redirect_path(newpath, buf2, sizeof(buf2)) : newpath;
-    return orig(olddirfd, rold, newdirfd, rnew);
+    return orig(olddirfd, redirect_path(oldpath, buf1, sizeof(buf1)), newdirfd, redirect_path(newpath, buf2, sizeof(buf2)));
 }
 
 static char** ensure_env(char* const envp[]) {
@@ -553,6 +735,41 @@ static char** ensure_env(char* const envp[]) {
     for (int i = 0; i < count; i++) {
         if (i == preload_idx && need_modify_preload) {
             new_env[i] = strdup(combined_preload);
+        } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
+                   (strstr(envp[i], TARGET_PREFIX1) || strstr(envp[i], TARGET_PREFIX2) ||
+                    strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
+            char new_path[4096];
+            const char* src = envp[i];
+            char* dst = new_path;
+            size_t rem = sizeof(new_path) - 1;
+            while (*src && rem > 0) {
+                if (strncmp(src, TARGET_PREFIX1, TARGET_LEN1) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
+                    dst += n;
+                    rem -= n;
+                    src += TARGET_LEN1;
+                } else if (strncmp(src, TARGET_PREFIX2, TARGET_LEN2) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
+                    dst += n;
+                    rem -= n;
+                    src += TARGET_LEN2;
+                } else if (strncmp(src, TARGET_PREFIX3, TARGET_LEN3) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
+                    dst += n;
+                    rem -= n;
+                    src += TARGET_LEN3;
+                } else if (strncmp(src, TARGET_PREFIX4, TARGET_LEN4) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
+                    dst += n;
+                    rem -= n;
+                    src += TARGET_LEN4;
+                } else {
+                    *dst++ = *src++;
+                    rem--;
+                }
+            }
+            *dst = '\0';
+            new_env[i] = strdup(new_path);
         } else {
             new_env[i] = envp[i];
         }
@@ -575,6 +792,33 @@ static char** ensure_env(char* const envp[]) {
     }
     new_env[pos] = NULL;
     return new_env;
+}
+
+static const char* resolve_in_path(const char* file, char* buffer, size_t bufsize) {
+    if (!file) return file;
+    if (strchr(file, '/')) {
+        return redirect_path(file, buffer, bufsize);
+    }
+    const char* path_env = getenv("PATH");
+    if (!path_env) path_env = "/data/data/com.termux/files/usr/bin:/system/bin";
+
+    char path_copy[2048];
+    strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+
+    char* token = strtok(path_copy, ":");
+    while (token) {
+        char red_token[1024];
+        const char* rtoken = redirect_path(token, red_token, sizeof(red_token));
+        char candidate[1024];
+        snprintf(candidate, sizeof(candidate), "%s/%s", rtoken, file);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(buffer, bufsize, "%s", candidate);
+            return buffer;
+        }
+        token = strtok(NULL, ":");
+    }
+    return file;
 }
 
 // Helper to handle shebang in exec
@@ -615,29 +859,103 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
 // execve
 typedef int (*orig_execve_t)(const char*, char* const[], char* const[]);
 int execve(const char* filename, char* const argv[], char* const envp[]) {
-    static orig_execve_t orig = NULL;
+    static orig_execve_t o_execve = NULL;
     static orig_open_t o_open = NULL;
-    if (!orig) orig = (orig_execve_t)dlsym(RTLD_NEXT, "execve");
+    if (!o_execve) o_execve = (orig_execve_t)dlsym(RTLD_NEXT, "execve");
     if (!o_open) o_open = (orig_open_t)dlsym(RTLD_NEXT, "open");
     char buf[1024];
     const char* rpath = redirect_path(filename, buf, sizeof(buf));
-    return handle_shebang_exec(rpath, argv, envp, o_open, orig);
+    return handle_shebang_exec(rpath, argv, envp, o_open, o_execve);
+}
+
+// execvpe
+int execvpe(const char* file, char* const argv[], char* const envp[]) {
+    static orig_execve_t o_execve = NULL;
+    static orig_open_t o_open = NULL;
+    if (!o_execve) o_execve = (orig_execve_t)dlsym(RTLD_NEXT, "execve");
+    if (!o_open) o_open = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    char buf[1024];
+    const char* rpath = resolve_in_path(file, buf, sizeof(buf));
+    return handle_shebang_exec(rpath, argv, envp, o_open, o_execve);
+}
+
+// execvp
+int execvp(const char* file, char* const argv[]) {
+    return execvpe(file, argv, environ);
 }
 
 // execv
-typedef int (*orig_execv_t)(const char*, char* const[]);
 int execv(const char* pathname, char* const argv[]) {
     return execve(pathname, argv, environ);
 }
 
-// execvp
-typedef int (*orig_execvp_t)(const char*, char* const[]);
-int execvp(const char* file, char* const argv[]) {
-    static orig_execvp_t orig = NULL;
-    static orig_open_t o_open = NULL;
-    if (!orig) orig = (orig_execvp_t)dlsym(RTLD_NEXT, "execvp");
-    if (!o_open) o_open = (orig_open_t)dlsym(RTLD_NEXT, "open");
-    char buf[1024];
-    const char* rpath = redirect_path(file, buf, sizeof(buf));
-    return handle_shebang_exec(rpath, argv, environ, o_open, (int (*)(const char*, char* const[], char* const[]))orig);
+// execl
+int execl(const char* path, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execv(path, argv);
+    free(argv);
+    return ret;
 }
+
+// execlp
+int execlp(const char* file, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execvp(file, argv);
+    free(argv);
+    return ret;
+}
+
+// execle
+int execle(const char* path, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    char* const* envp = va_arg(args, char* const*);
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execve(path, argv, envp);
+    free(argv);
+    return ret;
+}
+

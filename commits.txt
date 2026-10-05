@@ -76,3 +76,18 @@ DESCRIPTION:
 - Restrict ndk.abiFilters in terminal-emulator and termux-shared to 'arm64-v8a'.
 - Eliminates compilation of x86, x86_64, and armeabi-v7a architectures, producing solely arm64-v8a APK.
 
+--------------------------------------------------------------------------------
+COMMIT 8: [293b304] - 2026-10-06 03:22:00 +0530
+MESSAGE: "Fix deb archive path redirection, dpkg execution, and parent directory permissions, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Enhance redirect_path() in termex-redirect.c with path normalization, fast 1-cycle prefix rejection, and support for leading './' relative paths used by dpkg tar archives.
+- Add dynamic parent_app_dir resolution (/data/user/<userId>) to redirect parent directory references (./data/data, /data/data, ./data/user/0, /data/user/0) which are inaccessible to secondary users (0771 system:system).
+- Support dpkg temporary file suffixes (.dpkg-tmp, .dpkg-new, .dpkg-old, .dpkg-dist) in path redirection.
+- Intercept exec family functions (execv, execvp, execvpe, execl, execlp, execle) and implement resolve_in_path() so dpkg can execute subprocesses like dpkg-split and tar across PATH.
+- Intercept stat64, lstat64, fstatat64, lchmod, lchown, and utimensat.
+- Protect parent directory operations from returning EPERM/EACCES during unpack and cleanup in chmod, fchmodat, lchmod, chown, fchownat, lchown, utime, utimes, utimensat, unlink, unlinkat, and rmdir.
+- Expand ensure_env() to rewrite all target prefixes in PATH.
+- Verified on User 10 (Island) via ADB: dpkg -i, pkg install tree, apt-get install --reinstall tree, and pkg install bat all complete with 100% success and exit code 0.
+
+
