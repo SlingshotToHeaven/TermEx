@@ -157,6 +157,9 @@ final class TermuxInstaller {
                                     if (parts.length != 2)
                                         throw new RuntimeException("Malformed symlink line: " + line);
                                     String oldPath = parts[0];
+                                    if (oldPath.startsWith("/data/data/com.termux/files/usr")) {
+                                        oldPath = TERMUX_PREFIX_DIR_PATH + oldPath.substring("/data/data/com.termux/files/usr".length());
+                                    }
                                     String newPath = TERMUX_STAGING_PREFIX_DIR_PATH + "/" + parts[1];
                                     symlinks.add(Pair.create(oldPath, newPath));
 
@@ -178,10 +181,45 @@ final class TermuxInstaller {
                                 }
 
                                 if (!isDirectory) {
-                                    try (FileOutputStream outStream = new FileOutputStream(targetFile)) {
+                                    byte[] entryBytes;
+                                    try (java.io.ByteArrayOutputStream byteStream = new java.io.ByteArrayOutputStream()) {
                                         int readBytes;
-                                        while ((readBytes = zipInput.read(buffer)) != -1)
-                                            outStream.write(buffer, 0, readBytes);
+                                        while ((readBytes = zipInput.read(buffer)) != -1) {
+                                            byteStream.write(buffer, 0, readBytes);
+                                        }
+                                        entryBytes = byteStream.toByteArray();
+                                    }
+
+                                    if ((zipEntryName.startsWith("bin/") || zipEntryName.startsWith("etc/")) &&
+                                        !TERMUX_PREFIX_DIR_PATH.equals("/data/data/com.termux/files/usr") && entryBytes.length > 0) {
+                                        boolean isText = true;
+                                        int checkLen = Math.min(entryBytes.length, 512);
+                                        for (int i = 0; i < checkLen; i++) {
+                                            if (entryBytes[i] == 0) {
+                                                isText = false;
+                                                break;
+                                            }
+                                        }
+                                        if (isText) {
+                                            String content = new String(entryBytes, java.nio.charset.StandardCharsets.UTF_8);
+                                            boolean modified = false;
+                                            if (content.contains("/data/data/com.termux")) {
+                                                content = content.replace("/data/data/com.termux/files/usr", TERMUX_PREFIX_DIR_PATH);
+                                                content = content.replace("/data/data/com.termux", TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH);
+                                                modified = true;
+                                            }
+                                            if (zipEntryName.equals("bin/login") && content.contains("export LD_PRELOAD=\"")) {
+                                                content = content.replace("export LD_PRELOAD=\"", "export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD }");
+                                                modified = true;
+                                            }
+                                            if (modified) {
+                                                entryBytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                                            }
+                                        }
+                                    }
+
+                                    try (FileOutputStream outStream = new FileOutputStream(targetFile)) {
+                                        outStream.write(entryBytes);
                                     }
                                     if (zipEntryName.startsWith("bin/") || zipEntryName.startsWith("libexec") ||
                                         zipEntryName.startsWith("lib/apt/apt-helper") || zipEntryName.startsWith("lib/apt/methods")) {
@@ -204,6 +242,8 @@ final class TermuxInstaller {
                     if (!TERMUX_STAGING_PREFIX_DIR.renameTo(TERMUX_PREFIX_DIR)) {
                         throw new RuntimeException("Moving termux prefix staging to prefix directory failed");
                     }
+
+                    copyRedirectLibraryIfNeeded(activity);
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 
@@ -368,6 +408,23 @@ final class TermuxInstaller {
         // Only load the shared library when necessary to save memory usage.
         System.loadLibrary("termux-bootstrap");
         return getZip();
+    }
+
+    public static void copyRedirectLibraryIfNeeded(Context context) {
+        try {
+            File targetLib = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH, "libtermex-redirect.so");
+            File sourceLib = new File(context.getApplicationInfo().nativeLibraryDir, "libtermex-redirect.so");
+            if (sourceLib.exists()) {
+                if (!targetLib.exists() || targetLib.length() != sourceLib.length()) {
+                    ensureDirectoryExists(targetLib.getParentFile());
+                    FileUtils.copyFile("libtermex-redirect.so", sourceLib.getAbsolutePath(), targetLib.getAbsolutePath(), true);
+                    //noinspection OctalInteger
+                    Os.chmod(targetLib.getAbsolutePath(), 0755);
+                }
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to install libtermex-redirect.so: " + e.getMessage());
+        }
     }
 
     public static native byte[] getZip();

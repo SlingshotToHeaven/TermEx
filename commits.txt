@@ -41,3 +41,17 @@ MESSAGE: "Fully qualify component class names in AndroidManifest.xml, see commit
 DESCRIPTION:
 - Fully qualify application, activity, receiver, provider, and service class names with com.termux package in app/src/main/AndroidManifest.xml.
 - Resolves ClassNotFoundException when launching under applicationId com.termex.
+
+--------------------------------------------------------------------------------
+COMMIT 5: [f09e22e] - 2026-10-06 02:18:00 +0530
+MESSAGE: "Implement transparent multi-user path redirection and bootstrap installer fixes, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement libtermex-redirect.so native LD_PRELOAD shimming library in termux-shared/src/main/cpp/termex-redirect.c to intercept libc filesystem operations (open, openat, creat, fopen, fopen64, freopen, stat, lstat, fstatat, access, faccessat, readlink, readlinkat, realpath, opendir, scandir, chdir, mkdir, mkdirat, rmdir, unlink, unlinkat, symlink, symlinkat, link, linkat, truncate, utime, utimes, chmod, fchmodat, chown, fchownat, rename, renameat, execve, execvp).
+- Transparently map legacy hardcoded paths (/data/data/com.termux, /data/user/0/com.termux, /data/data/com.termex) to the active user's isolated application storage (/data/user/<userId>/com.termex) with zero performance toll.
+- Intercept execve and execvp to dynamically rewrite script shebangs and preserve LD_PRELOAD, LD_LIBRARY_PATH, and TERMEX_REAL_APP_DIR across process invocations, preventing LD_PRELOAD eviction when child scripts export termux-exec.
+- Fix TermuxConstants path initialization ordering so TERMUX_ENV_FILE_PATH is populated before directory emptiness evaluation.
+- Update TermuxInstaller to rewrite SYMLINKS.txt target paths, script shebangs, and text configuration files in bin/ and etc/ at install time to match the active user's prefix.
+- Automatically copy libtermex-redirect.so from APK nativeLibraryDir into $PREFIX/lib/libtermex-redirect.so upon bootstrap installation.
+- Automatically configure LD_PRELOAD and TERMEX_REAL_APP_DIR in TermuxShellEnvironment for secondary user profiles.
+- Verified on User 10 (Island) via ADB: bootstrap extracts completely, second stage packages (coreutils, nano, termux-exec, util-linux) postinst scripts complete with 100% success, dpkg and apt list execute cleanly, and interactive terminal session runs with full command execution verified via screenshot.

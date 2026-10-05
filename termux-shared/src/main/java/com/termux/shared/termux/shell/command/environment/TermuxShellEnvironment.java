@@ -16,6 +16,7 @@ import com.termux.shared.termux.TermuxBootstrap;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.shell.TermuxShellUtils;
 
+import java.io.File;
 import java.nio.charset.Charset;
 import java.util.HashMap;
 
@@ -91,12 +92,21 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
                 environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
             } else {
                 environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
-                if (PackageUtils.isCurrentUserThePrimaryUser(currentPackageContext)) {
-                    // Termux binaries on Android 7+ rely on DT_RUNPATH for user 0, so LD_LIBRARY_PATH is unset by default
+                if ("/data/data/com.termux/files/usr".equals(TermuxConstants.TERMUX_PREFIX_DIR_PATH)) {
+                    // Default upstream path on primary user relies on DT_RUNPATH, so LD_LIBRARY_PATH is unset
                     environment.remove(ENV_LD_LIBRARY_PATH);
                 } else {
-                    // For secondary users, point LD_LIBRARY_PATH to the user's isolated prefix lib directory
+                    // For secondary users and custom app paths, point LD_LIBRARY_PATH to prefix lib directory
                     environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+
+                    File redirectLib = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH, "libtermex-redirect.so");
+                    if (!redirectLib.exists() && currentPackageContext.getApplicationInfo() != null && currentPackageContext.getApplicationInfo().nativeLibraryDir != null) {
+                        redirectLib = new File(currentPackageContext.getApplicationInfo().nativeLibraryDir, "libtermex-redirect.so");
+                    }
+                    if (redirectLib.exists()) {
+                        environment.put("LD_PRELOAD", redirectLib.getAbsolutePath());
+                        environment.put("TERMEX_REAL_APP_DIR", TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH);
+                    }
                 }
             }
         }

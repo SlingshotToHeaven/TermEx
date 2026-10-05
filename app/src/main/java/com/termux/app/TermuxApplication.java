@@ -73,6 +73,9 @@ public class TermuxApplication extends Application {
 
         if (isTermuxFilesDirectoryAccessible) {
             TermuxShellEnvironment.writeEnvironmentToFile(this);
+            if (!TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
+                TermuxInstaller.copyRedirectLibraryIfNeeded(this);
+            }
         }
     }
 
