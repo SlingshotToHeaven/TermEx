@@ -43,7 +43,7 @@ DESCRIPTION:
 - Resolves ClassNotFoundException when launching under applicationId com.termex.
 
 --------------------------------------------------------------------------------
-COMMIT 5: [f09e22e] - 2026-10-06 02:18:00 +0530
+COMMIT 5: [1433f9b] - 2026-10-06 02:18:00 +0530
 MESSAGE: "Implement transparent multi-user path redirection and bootstrap installer fixes, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
