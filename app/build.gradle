@@ -41,6 +41,7 @@ android {
     }
 
     defaultConfig {
+        applicationId "com.termex"
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
         versionCode 118
@@ -51,8 +52,8 @@ android {
 
         buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
 
-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
+        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termex"
+        manifestPlaceholders.TERMUX_APP_NAME = "TermEx"
         manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
         manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
         manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
@@ -79,10 +80,28 @@ android {
 
     signingConfigs {
         debug {
-            storeFile file('testkey_untrusted.jks')
-            keyAlias 'alias'
-            storePassword 'xrj45yWGLbsO7W0v'
-            keyPassword 'xrj45yWGLbsO7W0v'
+            def userDebugKeystore = file("${System.getProperty('user.home')}/keys/debug.keystore")
+            if (userDebugKeystore.exists()) {
+                storeFile userDebugKeystore
+                keyAlias 'androiddebugkey'
+                storePassword 'android'
+                keyPassword 'android'
+            } else {
+                storeFile file('testkey_untrusted.jks')
+                keyAlias 'alias'
+                storePassword 'xrj45yWGLbsO7W0v'
+                keyPassword 'xrj45yWGLbsO7W0v'
+            }
+        }
+
+        release {
+            def userReleaseKeystore = file("${System.getProperty('user.home')}/keys/release.keystore")
+            if (userReleaseKeystore.exists()) {
+                storeFile userReleaseKeystore
+                keyAlias 'release'
+                storePassword '[</({=})$>]'
+                keyPassword '[</({=})$>]'
+            }
         }
     }
 
@@ -91,6 +110,7 @@ android {
             minifyEnabled true
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
 
         debug {
@@ -132,10 +152,10 @@ android {
         variant.outputs.all { output ->
             if (variant.buildType.name == "debug") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("termex-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
             } else if (variant.buildType.name == "release") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("termex-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
             }
         }
     }
