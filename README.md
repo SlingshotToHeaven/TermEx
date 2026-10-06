@@ -1,11 +1,22 @@
-# Termux application
+# TermEx (Termux Multi-User & Extended Architecture)
 
-[![Build status](https://github.com/termux/termux-app/workflows/Build/badge.svg)](https://github.com/termux/termux-app/actions)
-[![Testing status](https://github.com/termux/termux-app/workflows/Unit%20tests/badge.svg)](https://github.com/termux/termux-app/actions)
-[![Join the chat at https://gitter.im/termux/termux](https://badges.gitter.im/termux/termux.svg)](https://gitter.im/termux/termux)
-[![Join the Termux discord server](https://img.shields.io/discord/641256914684084234.svg?label=&logo=discord&logoColor=ffffff&color=5865F2)](https://discord.gg/HXpF69X)
-[![Termux library releases at Jitpack](https://jitpack.io/v/termux/termux-app.svg)](https://jitpack.io/#termux/termux-app)
+> **TermEx** is an advanced fork of Termux engineered for seamless execution across secondary Android user profiles (Island, Shelter, Work Profiles, Multi-User mode) with transparent `/data/data/com.termux` compatibility, native `glibc` execution, and full Antigravity CLI (`agy`) support.
 
+### Key Architectural Enhancements in TermEx:
+1. **Multi-User Profile Native Interposition (`libtermex-redirect.so`)**:
+   - Transparently maps hardcoded upstream `/data/data/com.termux` paths to the dynamic active user directory (`/data/user/<userId>/com.termex/`).
+   - Hooks all Bionic libc filesystem and execution syscalls (`open`, `stat`, `execve`, `chdir`, `renameat2`, `readlink`, `realpath`).
+2. **glibc Runtime & Antigravity CLI (`agy`) Support**:
+   - Dynamic ELF header parsing (`check_is_glibc_binary()`) isolates Bionic `LD_PRELOAD` when launching `glibc` dynamic linkers.
+   - Bypasses kernel `PT_INTERP` permission barriers on secondary users by launching redirected glibc loaders directly in userspace.
+3. **Environment Hardening (`env -i`)**:
+   - Safeguards stripped execution environments by reinjecting essential library runpaths (`$PREFIX/lib`), guaranteeing zero `libandroid-support.so` linking failures.
+4. **Android System Linker Sanitization**:
+   - Automatically purges app `LD_PRELOAD` and `LD_LIBRARY_PATH` when calling `/system/bin/` or `/apex/` utilities, ensuring zero linker noise or namespace warnings.
+5. **Process Identity Virtualization**:
+   - Transparently virtualizes `/proc/self/exe` queries in `readlink` and `realpath` to report canonical upstream paths to demanding scripts.
+
+***
 
 [Termux](https://termux.dev) is an Android terminal application and Linux environment.
 

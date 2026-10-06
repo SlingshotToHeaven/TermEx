@@ -162,6 +162,17 @@ DESCRIPTION:
 - Rewrites real application directory paths (/data/user/<userId>/com.termex/...) back to the canonical upstream path (/data/data/com.termux/...), ensuring packages and scripts asserting on /proc/self/exe or package identity match expected upstream signatures.
 - Update possible_bugs_to_ponder_upon_later.txt documenting resolution of Item 7.
 
+COMMIT 17: [9ef3422] - 2026-10-06 16:36:15 +0530
+MESSAGE: "Audit and document buffer bounds safety for expanded path strings, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Conduct static security and bounds audit of all stack allocations and string expansions in termex-redirect.c.
+- Confirm bounded length copying in virtualize_returned_path(), handle_shebang_exec(), and ensure_env().
+- Update possible_bugs_to_ponder_upon_later.txt documenting resolution and verification of Item 9 (Phase 5).
 
-
-
+COMMIT 18: [3309f86] - 2026-10-06 16:45:00 +0530
+MESSAGE: "Update README with TermEx multi-user architecture and features, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Overhaul README.md with comprehensive documentation of TermEx multi-user architecture and enhancements.
+- Detail native interposition (libtermex-redirect.so), glibc/agy support, env -i hardening, system linker sanitization, and /proc/ process identity virtualization.
