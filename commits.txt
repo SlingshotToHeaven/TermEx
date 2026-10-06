@@ -111,11 +111,12 @@ DESCRIPTION:
 - Preserve Android component and Java package class names (e.g. com.termux.app.TermuxService) in sanitize_exec_argv() and TermuxInstaller.java when rewriting package identifiers in am command invocations.
 - Implement complete 6-phase resilience testing suite and specification (RESILIENCE_TEST_PLAN.md, tests/test_phase{1..6}.sh) with verified test logs (tests/phase{1..6}_result.log) validating environment hierarchy, native interposition edge cases, package management stress, IPC/signals/pipes, storage concurrency, and session lifecycle recovery.
 
---------------------------------------------------------------------------------
-COMMIT 11: [6ce858a] - 2026-10-06 07:58:00 +0530
-MESSAGE: "Update app icon foreground tint to emerald cyan for visual distinction, see commits.txt"
+COMMIT 11: [e563e29] - 2026-10-06 08:06:00 +0530
+MESSAGE: "Redesign app launcher icon with cyberpunk neon synthwave gradient, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
-- Tint launcher icon terminal prompt chevron and cursor from monochrome white to modern emerald cyan (#00E6B4) across both vector adaptive icon (ic_foreground.xml) and pre-rendered raster mipmap densities (mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi, standard and round).
-- Makes TermEx immediately visually distinguishable on device home screens and app launchers from upstream Termux.
+- Redesign adaptive icon vector (ic_foreground.xml) with multi-stop linear gradients transitioning from Cyber Cyan (#00F5FF) through Electric Magenta (#FF0080) to Neon Purple (#A020F0).
+- Create custom dark obsidian/navy angled gradient background (ic_launcher_background.xml) replacing flat black in adaptive icons (ic_launcher.xml, ic_launcher_round.xml).
+- Re-render raster mipmap PNGs across all pixel densities (mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi, standard and round) with pixel-level Paeth-unfiltered diagonal cyberpunk gradient and deep-slate contrast framing.
+
 

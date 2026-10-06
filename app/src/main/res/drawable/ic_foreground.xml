@@ -1,28 +1,51 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:height="108dp"
     android:width="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Keep in sync with non-adaptive ic_launcher.xml -->
+    <!-- Terminal Chevron '>' with Cyberpunk Cyan-to-Magenta linear gradient -->
     <path
-        android:fillColor="#00E6B4"
         android:pathData="M34,38
                           h6
                           l12,16
                           l-12,16
                           h-6
                           l12,-16
-                          "
-        />
+                          Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="34"
+                android:startY="38"
+                android:endX="52"
+                android:endY="70"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF00F5FF"/>
+                <item android:offset="0.55" android:color="#FFFF0080"/>
+                <item android:offset="1.0" android:color="#FFA020F0"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 
+    <!-- Terminal Cursor '_' with Neon Magenta-to-Purple linear gradient -->
     <path
-        android:fillColor="#00E6B4"
         android:pathData="M56,66
                           h18
                           v4
                           h-18
-                          "
-        />
+                          Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="56"
+                android:startY="66"
+                android:endX="74"
+                android:endY="70"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFF0080"/>
+                <item android:offset="1.0" android:color="#FFB5179E"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 
 </vector>
