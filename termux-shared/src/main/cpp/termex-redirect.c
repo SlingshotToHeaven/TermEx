@@ -30,6 +30,8 @@ static size_t current_app_dir_len = 0;
 static char parent_app_dir[512] = {0};
 static size_t parent_app_dir_len = 0;
 
+static char default_libpath[512] = {0};
+
 __attribute__((constructor))
 static void init_redirect(void) {
     const char* env_dir = getenv("TERMEX_REAL_APP_DIR");
@@ -66,6 +68,7 @@ static void init_redirect(void) {
     }
     current_app_dir_len = strlen(current_app_dir);
     if (current_app_dir_len > 0) {
+        snprintf(default_libpath, sizeof(default_libpath), "%s/files/usr/lib", current_app_dir);
         char* slash = strrchr(current_app_dir, '/');
         if (slash && slash > current_app_dir) {
             size_t plen = slash - current_app_dir;
@@ -774,24 +777,27 @@ long syscall(long number, ...) {
     return orig(number, a1, a2, a3, a4, a5, a6);
 }
 
-static int check_is_glibc_binary(const char* path) {
+static int check_is_glibc_binary(const char* path, char* interp_out, size_t interp_out_len) {
+    if (interp_out && interp_out_len > 0) interp_out[0] = '\0';
     if (!path) return 0;
-    if (strstr(path, "ld-linux") != NULL || strstr(path, "/glibc/") != NULL) {
+    if (strstr(path, "ld-linux") != NULL) {
         return 1;
     }
     int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
+    if (fd < 0) {
+        return strstr(path, "/glibc/") != NULL ? 1 : 0;
+    }
     unsigned char e_ident[EI_NIDENT];
     if (read(fd, e_ident, sizeof(e_ident)) != (ssize_t)sizeof(e_ident)) {
         close(fd);
-        return 0;
+        return strstr(path, "/glibc/") != NULL ? 1 : 0;
     }
     if (memcmp(e_ident, ELFMAG, SELFMAG) != 0) {
         close(fd);
-        return 0;
+        return strstr(path, "/glibc/") != NULL ? 1 : 0;
     }
 
-    int is_glibc = 0;
+    int is_glibc = strstr(path, "/glibc/") != NULL ? 1 : 0;
     if (e_ident[EI_CLASS] == ELFCLASS64) {
         Elf64_Ehdr ehdr;
         lseek(fd, 0, SEEK_SET);
@@ -805,6 +811,10 @@ static int check_is_glibc_binary(const char* path) {
                     lseek(fd, phdr.p_offset, SEEK_SET);
                     if (read(fd, interp, phdr.p_filesz) > 0) {
                         interp[sizeof(interp) - 1] = '\0';
+                        if (interp_out && interp_out_len > 0) {
+                            strncpy(interp_out, interp, interp_out_len - 1);
+                            interp_out[interp_out_len - 1] = '\0';
+                        }
                         if (strstr(interp, "ld-linux") != NULL || strstr(interp, "glibc") != NULL) {
                             is_glibc = 1;
                         }
@@ -826,6 +836,10 @@ static int check_is_glibc_binary(const char* path) {
                     lseek(fd, phdr.p_offset, SEEK_SET);
                     if (read(fd, interp, phdr.p_filesz) > 0) {
                         interp[sizeof(interp) - 1] = '\0';
+                        if (interp_out && interp_out_len > 0) {
+                            strncpy(interp_out, interp, interp_out_len - 1);
+                            interp_out[interp_out_len - 1] = '\0';
+                        }
                         if (strstr(interp, "ld-linux") != NULL || strstr(interp, "glibc") != NULL) {
                             is_glibc = 1;
                         }
@@ -850,6 +864,9 @@ static char** ensure_env(char* const envp[], int is_glibc) {
     }
     const char* cur_preload = getenv("LD_PRELOAD");
     const char* cur_libpath = getenv("LD_LIBRARY_PATH");
+    if (!cur_libpath && default_libpath[0]) {
+        cur_libpath = default_libpath;
+    }
     const char* cur_app_dir = current_app_dir;
 
     char redirect_so_path[512] = {0};
@@ -918,11 +935,15 @@ static char** ensure_env(char* const envp[], int is_glibc) {
     if (!new_env) return (char**)envp;
     int write_pos = 0;
     for (int i = 0; i < count; i++) {
-        if (i == preload_idx && need_modify_preload) {
-            if (combined_preload[0] != '\0') {
-                new_env[write_pos++] = strdup(combined_preload);
+        if (i == preload_idx) {
+            if (need_modify_preload) {
+                if (combined_preload[0] != '\0') {
+                    new_env[write_pos++] = strdup(combined_preload);
+                }
+                // If combined_preload is empty, it was stripped (e.g. for glibc)
+            } else {
+                new_env[write_pos++] = envp[i];
             }
-            // If combined_preload is empty, we intentionally omitted it (stripping LD_PRELOAD)
         } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
                    (strstr(envp[i], TARGET_PREFIX1) || strstr(envp[i], TARGET_PREFIX2) ||
                     strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
@@ -957,28 +978,27 @@ static char** ensure_env(char* const envp[], int is_glibc) {
                 }
             }
             *dst = '\0';
-            new_env[i] = strdup(new_path);
+            new_env[write_pos++] = strdup(new_path);
         } else {
-            new_env[i] = envp[i];
+            new_env[write_pos++] = envp[i];
         }
     }
-    int pos = count;
-    if (preload_idx < 0 && redirect_so_path[0] != '\0') {
+    if (!is_glibc && preload_idx < 0 && redirect_so_path[0] != '\0') {
         char buf[1024];
         snprintf(buf, sizeof(buf), "LD_PRELOAD=%s", redirect_so_path);
-        new_env[pos++] = strdup(buf);
+        new_env[write_pos++] = strdup(buf);
     }
     if (libpath_idx < 0 && cur_libpath) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "LD_LIBRARY_PATH=%s", cur_libpath);
-        new_env[pos++] = strdup(buf);
+        new_env[write_pos++] = strdup(buf);
     }
     if (appdir_idx < 0 && cur_app_dir[0]) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "TERMEX_REAL_APP_DIR=%s", cur_app_dir);
-        new_env[pos++] = strdup(buf);
+        new_env[write_pos++] = strdup(buf);
     }
-    new_env[pos] = NULL;
+    new_env[write_pos] = NULL;
     return new_env;
 }
 
@@ -1103,10 +1123,58 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
 
 // Helper to handle shebang in exec
 static int handle_shebang_exec(const char* rpath, char* const argv[], char* const envp[], orig_open_t o_open, int (*exec_func)(const char*, char* const[], char* const[])) {
-    int is_glibc = check_is_glibc_binary(rpath);
+    char elf_interp[512] = {0};
+    int is_glibc = check_is_glibc_binary(rpath, elf_interp, sizeof(elf_interp));
     char** safe_envp = ensure_env(envp, is_glibc);
     int mod_argv = 0;
     char** eff_argv = sanitize_exec_argv(rpath, argv, &mod_argv);
+
+    // Case 1: Dynamic ELF binary with hardcoded glibc loader interpreter
+    // On secondary users or com.termex, the kernel cannot load /data/data/com.termux/... directly.
+    // We rewrite the execution to launch the redirected loader directly:
+    // [redirected_loader, "--library-path", "$PREFIX/glibc/lib", rpath, ...args]
+    if (is_glibc && elf_interp[0] != '\0' && strstr(elf_interp, "ld-linux") != NULL) {
+        char interp_buf[1024];
+        const char* rinterp = redirect_path(elf_interp, interp_buf, sizeof(interp_buf));
+        // If the interpreter in the ELF is redirected (e.g. /data/data/com.termux/... -> /data/user/0/com.termex/...)
+        // or if running directly on TermEx where kernel cannot load com.termux's ld-linux:
+        if (rinterp != elf_interp || access(rinterp, X_OK) == 0) {
+            char glibc_lib_dir[512];
+            if (current_app_dir[0]) {
+                snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s/files/usr/glibc/lib", current_app_dir);
+            } else {
+                // Fallback to dirname of rinterp
+                snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s", rinterp);
+                char* last_slash = strrchr(glibc_lib_dir, '/');
+                if (last_slash) *last_slash = '\0';
+            }
+
+            int argc = 0;
+            while (eff_argv && eff_argv[argc]) argc++;
+            // New argv: [rinterp, "--library-path", glibc_lib_dir, rpath, eff_argv[1] ... eff_argv[argc-1], NULL]
+            // Need (argc - 1) original trailing args + 4 prefix slots + 1 NULL = argc + 4
+            char** new_argv = malloc((argc + 4) * sizeof(char*));
+            if (new_argv) {
+                new_argv[0] = (char*)rinterp;
+                new_argv[1] = "--library-path";
+                new_argv[2] = glibc_lib_dir;
+                new_argv[3] = (char*)rpath;
+                for (int i = 1; i < argc; i++) new_argv[i + 3] = eff_argv[i];
+                new_argv[argc + 3] = NULL;
+
+                int ret = exec_func(rinterp, new_argv, safe_envp);
+                free(new_argv);
+                if (mod_argv) {
+                    for (int i = 0; i < argc; i++) {
+                        if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                    }
+                    free(eff_argv);
+                }
+                return ret;
+            }
+        }
+    }
+
     int fd = o_open ? o_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
     if (fd >= 0) {
         char header[256];

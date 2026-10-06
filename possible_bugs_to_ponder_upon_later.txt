@@ -4,10 +4,10 @@ This document catalogs potential edge cases, limitations, and architectural fail
 
 ---
 
-### 1. Mixed Libc Ecosystems (Android Bionic vs. glibc / musl)
+### 1. Mixed Libc Ecosystems (Android Bionic vs. glibc / musl) [RESOLVED - Phase 1]
 - **Problem**: Termux packages use Android Bionic libc (`libc.so`), but glibc environments (`glibc-repo`, `agy`, desktop environments, Box64/FEX) run under GNU libc (`ld-linux-aarch64.so.1` + `libc.so.6`).
 - **Symptom**: `LD_PRELOAD` is inherited across `execve()`. When a Bionic process spawns a glibc binary, glibc attempts to load `libtermex-redirect.so`. Because the redirect library depends on Bionic (`libdl.so`, `libc.so`), glibc fails to resolve `libdl.so` in its search paths and terminates with `Permission denied` or crashes due to ABI incompatibilities.
-- **Mitigation Needed**: Automatically strip `libtermex-redirect.so` from `LD_PRELOAD` when executing glibc loaders or glibc-linked ELF executables.
+- **Resolution**: Implemented ELF PT_INTERP program header parsing (`check_is_glibc_binary()`) and isolated `LD_PRELOAD` in `ensure_env()`. Automatically strips `libtermex-redirect.so` from `LD_PRELOAD` whenever spawning glibc dynamic linkers or binaries.
 
 ---
 
@@ -25,17 +25,17 @@ This document catalogs potential edge cases, limitations, and architectural fail
 
 ---
 
-### 4. Kernel ELF Interpreter Loading (`PT_INTERP`)
+### 4. Kernel ELF Interpreter Loading (`PT_INTERP`) [RESOLVED - Phase 1]
 - **Problem**: When `execve()` executes a dynamically linked ELF binary, the Linux kernel (not userspace) parses the binary's `PT_INTERP` header and loads the interpreter.
-- **Symptom**: If an ELF binary specifies `PT_INTERP = /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`, on secondary users (e.g., User 10), the kernel itself cannot access `/data/data/com.termux` due to Android permissions (`EACCES` or `ENOENT`). The execve call fails before `LD_PRELOAD` or the interpreter can execute.
-- **Mitigation Needed**: In `execve()` interposition, parse the target ELF header. If `PT_INTERP` points to an inaccessible hardcoded path (e.g. `/data/data/com.termux/...`), rewrite the exec call to run the redirected interpreter directly with the binary as an argument.
+- **Symptom**: If an ELF binary specifies `PT_INTERP = /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`, on secondary users (e.g., User 10) or on TermEx where `/data/data/com.termux` does not exist or has restrictive permissions, the kernel itself cannot access `/data/data/com.termux` (`EACCES` or `ENOENT`). The execve call fails with `Permission denied` before userspace can run.
+- **Resolution**: In `handle_shebang_exec()`, inspected ELF headers for `PT_INTERP` pointing to `ld-linux`. When detected, rewritten the execution into a direct invocation of the redirected dynamic linker: `[redirected_ld_linux, "--library-path", glibc_lib_dir, target_binary, ...args]`. Verified direct execution of glibc binaries across subshells and PATH lookups.
 
 ---
 
-### 5. `LD_PRELOAD` Sanitization by Tools and Environment Strippers
+### 5. `LD_PRELOAD` Sanitization by Tools and Environment Strippers [RESOLVED - Phase 2]
 - **Problem**: Programs or scripts that clean their environment (e.g., `env -i`, `sudo`, `login`, custom daemons, or certain Python/Node runner scripts) remove `LD_PRELOAD` and `LD_LIBRARY_PATH`.
-- **Symptom**: Subprocesses spawned from these scripts lose the interposition library. Bionic executables with `DT_RUNPATH` issues or hardcoded `/data/data/com.termux` fail to locate shared libraries or configuration files.
-- **Current Partial Mitigation**: `ensure_env()` reinjects `LD_PRELOAD` on `execve()`, but cannot protect against scripts that unset `LD_PRELOAD` internally before calling further commands in the same process.
+- **Symptom**: Subprocesses spawned from these scripts lose the interposition library and dynamic library search path. Bionic executables with hardcoded runpaths fail with `CANNOT LINK EXECUTABLE ... library "libandroid-support.so" not found`.
+- **Resolution**: Enhanced `ensure_env()` to automatically reinject both `LD_PRELOAD` and fallback `LD_LIBRARY_PATH` (`$PREFIX/lib`) whenever an execution occurs with a stripped environment (e.g. `env -i`). Verified clean execution of bash, coreutils, tar, gzip, curl, and glibc binaries under `env -i`.
 
 ---
 
