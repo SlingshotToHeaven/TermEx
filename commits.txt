@@ -111,7 +111,7 @@ DESCRIPTION:
 - Preserve Android component and Java package class names (e.g. com.termux.app.TermuxService) in sanitize_exec_argv() and TermuxInstaller.java when rewriting package identifiers in am command invocations.
 - Implement complete 6-phase resilience testing suite and specification (RESILIENCE_TEST_PLAN.md, tests/test_phase{1..6}.sh) with verified test logs (tests/phase{1..6}_result.log) validating environment hierarchy, native interposition edge cases, package management stress, IPC/signals/pipes, storage concurrency, and session lifecycle recovery.
 
-COMMIT 11: [a6066d5] - 2026-10-06 08:14:00 +0530
+COMMIT 11: [51ce99d] - 2026-10-06 08:14:00 +0530
 MESSAGE: "Refine app launcher icon with Electric Glacier Cyan and Frost Sheen gradient, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -119,6 +119,11 @@ DESCRIPTION:
 - Replaces disjointed multi-hue clashes with crisp frost highlights, deep laser-cyan saturation, and an ethereal ambient ice bloom aura.
 - Retains obsidian matrix grid canvas background (ic_launcher_background.xml) with subtle ice-blue radial core illumination.
 
-
-
+--------------------------------------------------------------------------------
+COMMIT 12: [c69b700] - 2026-10-06 10:30:00 +0530
+MESSAGE: "Add comprehensive multi-user architectural guide in changes-from-og-termux, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Document every change made to the upstream Termux project to support multi-user profiles in changes-from-og-termux/.
+- Include detailed deep dives on package renaming (01), dynamic path resolution (02), libtermex-redirect.so native interposition (03), bootstrap patching (04), IPC broadcast/storage integration (05), and build optimization/UI polish (06).
 
