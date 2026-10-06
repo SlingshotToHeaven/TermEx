@@ -170,9 +170,18 @@ DESCRIPTION:
 - Confirm bounded length copying in virtualize_returned_path(), handle_shebang_exec(), and ensure_env().
 - Update possible_bugs_to_ponder_upon_later.txt documenting resolution and verification of Item 9 (Phase 5).
 
-COMMIT 18: [3309f86] - 2026-10-06 16:45:00 +0530
+COMMIT 18: [b42a626] - 2026-10-06 16:45:00 +0530
 MESSAGE: "Update README with TermEx multi-user architecture and features, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
 - Overhaul README.md with comprehensive documentation of TermEx multi-user architecture and enhancements.
 - Detail native interposition (libtermex-redirect.so), glibc/agy support, env -i hardening, system linker sanitization, and /proc/ process identity virtualization.
+
+COMMIT 19: [6122230] - 2026-10-06 17:02:00 +0530
+MESSAGE: "Add open64/openat64/creat64 interception and dladdr auto-discovery in termex-redirect.c, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement open64(), openat64(), and creat64() interposition in termex-redirect.c: 64-bit binaries (dash, curl, OpenSSL, apt-key) bypass 32-bit open wrappers on aarch64; hooking these ensures file redirection applies uniformly across all system I/O.
+- Add dladdr((void*)init_redirect, &dli) self-discovery fallback in init_redirect: automatically determines current_app_dir from the loaded library's path if environment variables are stripped.
+- Call setenv("TERMEX_REAL_APP_DIR", ...) in init_redirect to ensure child processes and subshells automatically inherit active user pathing without requiring external scripts.
+- Verified on Samsung Galaxy device: pkg update, pkg upgrade, and pkg install (clang, ninja) run cleanly without GPG or TLS errors.

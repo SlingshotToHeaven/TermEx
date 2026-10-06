@@ -66,9 +66,25 @@ static void init_redirect(void) {
             }
         }
     }
+    // Dynamic dladdr self-discovery fallback: resolve path to libtermex-redirect.so itself
+    if (current_app_dir[0] == '\0') {
+        Dl_info dli;
+        if (dladdr((void*)init_redirect, &dli) && dli.dli_fname) {
+            const char* usr = strstr(dli.dli_fname, "/files/usr");
+            if (usr) {
+                size_t len = usr - dli.dli_fname;
+                if (len < sizeof(current_app_dir)) {
+                    strncpy(current_app_dir, dli.dli_fname, len);
+                    current_app_dir[len] = '\0';
+                }
+            }
+        }
+    }
     current_app_dir_len = strlen(current_app_dir);
     if (current_app_dir_len > 0) {
         snprintf(default_libpath, sizeof(default_libpath), "%s/files/usr/lib", current_app_dir);
+        // Expose to current process environment so child scripts and subshells inherit it immediately
+        setenv("TERMEX_REAL_APP_DIR", current_app_dir, 0);
         char* slash = strrchr(current_app_dir, '/');
         if (slash && slash > current_app_dir) {
             size_t plen = slash - current_app_dir;
@@ -199,10 +215,46 @@ int open(const char* pathname, int flags, ...) {
     return orig(rpath, flags);
 }
 
+// open64
+int open64(const char* pathname, int flags, ...) {
+    static orig_open_t orig = NULL;
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open64");
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    char buf[1024];
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    mode_t mode = 0;
+    if ((flags & O_CREAT) != 0) {
+        va_list args;
+        va_start(args, flags);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+        return orig(rpath, flags, mode);
+    }
+    return orig(rpath, flags);
+}
+
 // openat
 typedef int (*orig_openat_t)(int, const char*, int, ...);
 int openat(int dirfd, const char* pathname, int flags, ...) {
     static orig_openat_t orig = NULL;
+    if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat");
+    char buf[1024];
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    mode_t mode = 0;
+    if ((flags & O_CREAT) != 0) {
+        va_list args;
+        va_start(args, flags);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+        return orig(dirfd, rpath, flags, mode);
+    }
+    return orig(dirfd, rpath, flags);
+}
+
+// openat64
+int openat64(int dirfd, const char* pathname, int flags, ...) {
+    static orig_openat_t orig = NULL;
+    if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat64");
     if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat");
     char buf[1024];
     const char* rpath = redirect_path(pathname, buf, sizeof(buf));
@@ -248,6 +300,15 @@ int __openat(int dirfd, const char* pathname, int flags, int mode) {
 typedef int (*orig_creat_t)(const char*, mode_t);
 int creat(const char* pathname, mode_t mode) {
     static orig_creat_t orig = NULL;
+    if (!orig) orig = (orig_creat_t)dlsym(RTLD_NEXT, "creat");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+// creat64
+int creat64(const char* pathname, mode_t mode) {
+    static orig_creat_t orig = NULL;
+    if (!orig) orig = (orig_creat_t)dlsym(RTLD_NEXT, "creat64");
     if (!orig) orig = (orig_creat_t)dlsym(RTLD_NEXT, "creat");
     char buf[1024];
     return orig(redirect_path(pathname, buf, sizeof(buf)), mode);
