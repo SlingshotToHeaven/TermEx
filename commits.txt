@@ -145,7 +145,7 @@ DESCRIPTION:
 - Add default LD_LIBRARY_PATH ($PREFIX/lib) fallback in init_redirect and ensure_env() to safeguard executions under clean environments (env -i, sudo, login, sanitizing subshells).
 - Update possible_bugs_to_ponder_upon_later.txt documenting resolution of Items 1, 4, and 5.
 
-COMMIT 15: [36bc397] - 2026-10-06 16:26:00 +0530
+COMMIT 15: [b012a15] - 2026-10-06 16:26:00 +0530
 MESSAGE: "Sanitize LD_PRELOAD and LD_LIBRARY_PATH for Android system binaries, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -153,5 +153,14 @@ DESCRIPTION:
 - Automatically strip libtermex-redirect.so from LD_PRELOAD and purge LD_LIBRARY_PATH in ensure_env() and handle_shebang_exec() when invoking Android system tools (e.g. /system/bin/sh, am, pm).
 - Eliminates Android dynamic linker namespace warnings on modern OS versions and prevents system binaries from attempting to load app-private libraries.
 - Update possible_bugs_to_ponder_upon_later.txt documenting resolution of Item 6.
+
+COMMIT 16: [dadcc52] - 2026-10-06 16:32:00 +0530
+MESSAGE: "Virtualize /proc/self/exe and /proc/ path queries in readlink and realpath, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement virtualize_returned_path() in termex-redirect.c to transparently virtualize paths returned by readlink(), readlinkat(), __readlink_chk(), __readlinkat_chk(), and realpath() when querying /proc/ pseudo-filesystem targets.
+- Rewrites real application directory paths (/data/user/<userId>/com.termex/...) back to the canonical upstream path (/data/data/com.termux/...), ensuring packages and scripts asserting on /proc/self/exe or package identity match expected upstream signatures.
+- Update possible_bugs_to_ponder_upon_later.txt documenting resolution of Item 7.
+
 
 

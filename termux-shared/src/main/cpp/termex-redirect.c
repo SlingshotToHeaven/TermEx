@@ -380,13 +380,38 @@ int faccessat(int dirfd, const char* pathname, int mode, int flags) {
     return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, flags);
 }
 
+static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz) {
+    if (len <= 0 || !buf || current_app_dir_len == 0) return len;
+    // Check if the returned buffer starts with current_app_dir
+    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0) {
+        char suffix[1024];
+        size_t slen = len - current_app_dir_len;
+        if (slen < sizeof(suffix)) {
+            memcpy(suffix, buf + current_app_dir_len, slen);
+            suffix[slen] = '\0';
+            char vpath[1024];
+            int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+            if (n > 0) {
+                size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz;
+                memcpy(buf, vpath, to_copy);
+                return (ssize_t)to_copy;
+            }
+        }
+    }
+    return len;
+}
+
 // readlink
 typedef ssize_t (*orig_readlink_t)(const char*, char*, size_t);
 ssize_t readlink(const char* pathname, char* buf, size_t bufsiz) {
     static orig_readlink_t orig = NULL;
     if (!orig) orig = (orig_readlink_t)dlsym(RTLD_NEXT, "readlink");
     char tbuf[1024];
-    return orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
+    ssize_t ret = orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
+    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+        ret = virtualize_returned_path(buf, ret, bufsiz);
+    }
+    return ret;
 }
 
 // readlinkat
@@ -395,7 +420,11 @@ ssize_t readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
     static orig_readlinkat_t orig = NULL;
     if (!orig) orig = (orig_readlinkat_t)dlsym(RTLD_NEXT, "readlinkat");
     char tbuf[1024];
-    return orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
+    ssize_t ret = orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
+    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+        ret = virtualize_returned_path(buf, ret, bufsiz);
+    }
+    return ret;
 }
 
 // __readlink_chk
@@ -404,7 +433,11 @@ ssize_t __readlink_chk(const char* pathname, char* buf, size_t bufsiz, size_t bu
     static orig___readlink_chk_t orig = NULL;
     if (!orig) orig = (orig___readlink_chk_t)dlsym(RTLD_NEXT, "__readlink_chk");
     char tbuf[1024];
-    return orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
+    ssize_t ret = orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
+    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+        ret = virtualize_returned_path(buf, ret, bufsiz);
+    }
+    return ret;
 }
 
 // __readlinkat_chk
@@ -413,7 +446,11 @@ ssize_t __readlinkat_chk(int dirfd, const char* pathname, char* buf, size_t bufs
     static orig___readlinkat_chk_t orig = NULL;
     if (!orig) orig = (orig___readlinkat_chk_t)dlsym(RTLD_NEXT, "__readlinkat_chk");
     char tbuf[1024];
-    return orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
+    ssize_t ret = orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
+    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+        ret = virtualize_returned_path(buf, ret, bufsiz);
+    }
+    return ret;
 }
 
 // realpath
@@ -422,7 +459,12 @@ char* realpath(const char* path, char* resolved_path) {
     static orig_realpath_t orig = NULL;
     if (!orig) orig = (orig_realpath_t)dlsym(RTLD_NEXT, "realpath");
     char buf[1024];
-    return orig(redirect_path(path, buf, sizeof(buf)), resolved_path);
+    char* ret = orig(redirect_path(path, buf, sizeof(buf)), resolved_path);
+    if (ret && path && strstr(path, "/proc/")) {
+        size_t len = strlen(ret);
+        virtualize_returned_path(ret, (ssize_t)len, len + 128);
+    }
+    return ret;
 }
 
 // chdir

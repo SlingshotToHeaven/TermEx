@@ -46,9 +46,10 @@ This document catalogs potential edge cases, limitations, and architectural fail
 
 ---
 
-### 7. File Descriptor and Pseudofilesystem Leaks (`/proc/self/*`)
-- **Problem**: Utilities that inspect process identity via `/proc` (e.g. `/proc/self/exe`, `/proc/self/cmdline`, `/proc/self/mountinfo`, `/proc/self/maps`) will observe the real paths (`/data/user/<userId>/com.termex/...`) and the real package name (`com.termex`).
+### 7. File Descriptor and Pseudofilesystem Leaks (`/proc/self/*`) [RESOLVED - Phase 4]
+- **Problem**: Utilities that inspect process identity via `/proc` (e.g. `readlink("/proc/self/exe")`, `realpath("/proc/self/exe")`, `/proc/self/cmdline`) would observe the real path (`/data/user/<userId>/com.termex/...`) and the real package name (`com.termex`).
 - **Symptom**: Any script or package that validates its environment by asserting that `/proc/self/exe` contains `com.termux` or that its package name is strictly `com.termux` will detect the mismatch and fail or abort.
+- **Resolution**: Implemented `virtualize_returned_path()` in `termex-redirect.c` for `readlink()`, `readlinkat()`, `__readlink_chk()`, `__readlinkat_chk()`, and `realpath()`. Whenever queries target `/proc/`, any resolved path starting with the active app directory (`/data/user/<userId>/com.termex`) is transparently rewritten back to the canonical upstream path (`/data/data/com.termux`). Verified with native C test binaries and coreutils `readlink`/`realpath`.
 
 ---
 
