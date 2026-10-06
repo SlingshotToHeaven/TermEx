@@ -5,6 +5,23 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- Ambient Neon Bloom Glow around prompt -->
+    <path
+        android:fillAlpha="0.18"
+        android:pathData="M31,35 h12 l15,19 l-15,19 h-12 l15,-19 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="31"
+                android:startY="35"
+                android:endX="58"
+                android:endY="73"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF00F5FF"/>
+                <item android:offset="1.0" android:color="#FFFF0080"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
     <!-- Terminal Chevron '>' with Cyberpunk Cyan-to-Magenta linear gradient -->
     <path
         android:pathData="M34,38
@@ -47,5 +64,10 @@
             </gradient>
         </aapt:attr>
     </path>
+
+    <!-- Glowing Accent Prompt Dot in Cyber Cyan -->
+    <path
+        android:pathData="M78,67 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0 Z"
+        android:fillColor="#FF00F5FF"/>
 
 </vector>
