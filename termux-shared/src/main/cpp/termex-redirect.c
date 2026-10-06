@@ -853,7 +853,17 @@ static int check_is_glibc_binary(const char* path, char* interp_out, size_t inte
     return is_glibc;
 }
 
-static char** ensure_env(char* const envp[], int is_glibc) {
+static inline int is_system_binary(const char* path) {
+    if (!path) return 0;
+    return (strncmp(path, "/system/", 8) == 0 ||
+            strncmp(path, "/apex/", 6) == 0 ||
+            strncmp(path, "/vendor/", 8) == 0 ||
+            strncmp(path, "/product/", 9) == 0 ||
+            strncmp(path, "/system_ext/", 12) == 0 ||
+            strncmp(path, "/odm/", 5) == 0);
+}
+
+static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
     while (envp && envp[count]) {
@@ -889,8 +899,9 @@ static char** ensure_env(char* const envp[], int is_glibc) {
 
     int need_modify_preload = 0;
     char combined_preload[2048] = {0};
-    if (is_glibc) {
-        // When executing glibc loaders/binaries, strip libtermex-redirect.so from LD_PRELOAD
+    int should_strip_preload = is_glibc || is_system;
+    if (should_strip_preload) {
+        // When executing glibc or Android system binaries, strip libtermex-redirect.so from LD_PRELOAD
         if (preload_idx >= 0 && strstr(envp[preload_idx], "libtermex-redirect.so")) {
             char temp_val[2048] = {0};
             strncpy(temp_val, envp[preload_idx] + 11, sizeof(temp_val) - 1);
@@ -925,8 +936,8 @@ static char** ensure_env(char* const envp[], int is_glibc) {
         }
     }
 
-    int extra = (!is_glibc && preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
-                (libpath_idx < 0 && cur_libpath ? 1 : 0) +
+    int extra = (!should_strip_preload && preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
+                (!is_system && libpath_idx < 0 && cur_libpath ? 1 : 0) +
                 (appdir_idx < 0 && cur_app_dir[0] ? 1 : 0);
 
     if (extra == 0 && !need_modify_preload) return (char**)envp;
@@ -944,6 +955,9 @@ static char** ensure_env(char* const envp[], int is_glibc) {
             } else {
                 new_env[write_pos++] = envp[i];
             }
+        } else if (i == libpath_idx && is_system) {
+            // Strip LD_LIBRARY_PATH for Android system binaries to prevent linking against app libraries
+            continue;
         } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
                    (strstr(envp[i], TARGET_PREFIX1) || strstr(envp[i], TARGET_PREFIX2) ||
                     strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
@@ -983,12 +997,12 @@ static char** ensure_env(char* const envp[], int is_glibc) {
             new_env[write_pos++] = envp[i];
         }
     }
-    if (!is_glibc && preload_idx < 0 && redirect_so_path[0] != '\0') {
+    if (!should_strip_preload && preload_idx < 0 && redirect_so_path[0] != '\0') {
         char buf[1024];
         snprintf(buf, sizeof(buf), "LD_PRELOAD=%s", redirect_so_path);
         new_env[write_pos++] = strdup(buf);
     }
-    if (libpath_idx < 0 && cur_libpath) {
+    if (!is_system && libpath_idx < 0 && cur_libpath) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "LD_LIBRARY_PATH=%s", cur_libpath);
         new_env[write_pos++] = strdup(buf);
@@ -1125,7 +1139,8 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
 static int handle_shebang_exec(const char* rpath, char* const argv[], char* const envp[], orig_open_t o_open, int (*exec_func)(const char*, char* const[], char* const[])) {
     char elf_interp[512] = {0};
     int is_glibc = check_is_glibc_binary(rpath, elf_interp, sizeof(elf_interp));
-    char** safe_envp = ensure_env(envp, is_glibc);
+    int is_system = is_system_binary(rpath);
+    char** safe_envp = ensure_env(envp, is_glibc, is_system);
     int mod_argv = 0;
     char** eff_argv = sanitize_exec_argv(rpath, argv, &mod_argv);
 
@@ -1188,6 +1203,11 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
             while (*interp == ' ' || *interp == '\t') interp++;
             char interp_buf[1024];
             const char* rinterp = redirect_path(interp, interp_buf, sizeof(interp_buf));
+            int interp_is_system = is_system_binary(rinterp);
+            char** interp_envp = safe_envp;
+            if (interp_is_system != is_system) {
+                interp_envp = ensure_env(envp, is_glibc, interp_is_system);
+            }
             if (rinterp != interp) {
                 int argc = 0;
                 while (eff_argv && eff_argv[argc]) argc++;
@@ -1197,7 +1217,7 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
                     new_argv[1] = (char*)rpath;
                     for (int i = 1; i < argc; i++) new_argv[i + 1] = eff_argv[i];
                     new_argv[argc + 1] = NULL;
-                    int ret = exec_func(rinterp, new_argv, safe_envp);
+                    int ret = exec_func(rinterp, new_argv, interp_envp);
                     free(new_argv);
                     if (mod_argv) {
                         for (int i = 0; i < argc; i++) {

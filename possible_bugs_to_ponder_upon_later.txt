@@ -39,9 +39,10 @@ This document catalogs potential edge cases, limitations, and architectural fail
 
 ---
 
-### 6. Android System Binaries and Linker Restrictions
+### 6. Android System Binaries and Linker Restrictions [RESOLVED - Phase 3]
 - **Problem**: When a script invokes Android system tools (e.g., `/system/bin/sh`, `/system/bin/am`, `/system/bin/pm`, `app_process`), Android's linker enforces strict namespace and security restrictions.
-- **Symptom**: Starting in modern Android versions, the linker refuses to load non-system libraries from `LD_PRELOAD` into system binaries, printing linker warnings (`WARNING: linker: could not load library ...`) to stderr, which can break scripts that parse stdout/stderr cleanly.
+- **Symptom**: In modern Android versions, the linker refuses to load non-system libraries from `LD_PRELOAD` into system binaries, printing linker warnings (`WARNING: linker: could not load library ...`) to stderr, which can break scripts that parse stdout/stderr cleanly. Furthermore, inheriting app `LD_LIBRARY_PATH` can cause system utilities to accidentally link incompatible app libraries.
+- **Resolution**: Implemented `is_system_binary()` to identify executions of `/system/`, `/apex/`, `/vendor/`, `/product/`, `/system_ext/`, and `/odm/` binaries. In `ensure_env()` and `handle_shebang_exec()`, automatically strip both `libtermex-redirect.so` from `LD_PRELOAD` and `LD_LIBRARY_PATH` when spawning Android system binaries, guaranteeing zero linker pollution or warnings.
 
 ---
 
