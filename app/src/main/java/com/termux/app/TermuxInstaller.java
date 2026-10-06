@@ -217,7 +217,9 @@ final class TermuxInstaller {
                                                 modified = true;
                                             }
                                             if (zipEntryName.startsWith("bin/termux-") && content.contains("com.termux")) {
-                                                content = content.replace("com.termux", TermuxConstants.TERMUX_PACKAGE_NAME);
+                                                content = content.replace("com.termux/com.termux.", TermuxConstants.TERMUX_PACKAGE_NAME + "/com.termux.");
+                                                content = content.replace("-a \"com.termux.", "-a \"" + TermuxConstants.TERMUX_PACKAGE_NAME + ".");
+                                                content = content.replace("com.termux.permission.", TermuxConstants.TERMUX_PACKAGE_NAME + ".permission.");
                                                 modified = true;
                                             }
                                             if (modified) {
@@ -468,8 +470,24 @@ final class TermuxInstaller {
                         }
                     }
                     String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                    if (content.contains("com.termux")) {
-                        content = content.replace("com.termux", TermuxConstants.TERMUX_PACKAGE_NAME);
+                    boolean modified = false;
+                    if (content.contains("com.termux/com.termux.")) {
+                        content = content.replace("com.termux/com.termux.", TermuxConstants.TERMUX_PACKAGE_NAME + "/com.termux.");
+                        modified = true;
+                    }
+                    if (content.contains(TermuxConstants.TERMUX_PACKAGE_NAME + "/" + TermuxConstants.TERMUX_PACKAGE_NAME + ".")) {
+                        content = content.replace(TermuxConstants.TERMUX_PACKAGE_NAME + "/" + TermuxConstants.TERMUX_PACKAGE_NAME + ".", TermuxConstants.TERMUX_PACKAGE_NAME + "/com.termux.");
+                        modified = true;
+                    }
+                    if (content.contains("-a \"com.termux.")) {
+                        content = content.replace("-a \"com.termux.", "-a \"" + TermuxConstants.TERMUX_PACKAGE_NAME + ".");
+                        modified = true;
+                    }
+                    if (content.contains("com.termux.permission.")) {
+                        content = content.replace("com.termux.permission.", TermuxConstants.TERMUX_PACKAGE_NAME + ".permission.");
+                        modified = true;
+                    }
+                    if (modified) {
                         try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
                             fos.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                         }

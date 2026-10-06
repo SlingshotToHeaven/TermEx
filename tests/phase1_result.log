@@ -1,0 +1,13 @@
+=== PHASE 1: Shell Environment & Multi-User Process Hierarchy ===
+1.1 Canonical Variables:
+  PREFIX: /data/user/10/com.termex/files/usr
+  HOME: /data/user/10/com.termex/files/home
+  TERMUX__USER_ID: 10
+  TERMEX_REAL_APP_DIR: /data/user/10/com.termex
+  LD_PRELOAD: /data/user/10/com.termex/files/usr/lib/libtermex-redirect.so
+1.2 Spawning subshells:
+  [sh] PID: 23594, UID: 1010349, LD_PRELOAD: /data/user/10/com.termex/files/usr/lib/libtermex-redirect.so
+  [zsh] PID: 23596, UID: 1010349, LD_PRELOAD: /data/user/10/com.termex/files/usr/lib/libtermex-redirect.so
+1.3 Deep nested chaining (bash -> sh -> zsh):
+  [nested] Success across 3 levels!
+Phase 1: PASSED!

@@ -100,5 +100,13 @@ DESCRIPTION:
 - Implement sanitize_exec_argv() in termex-redirect.c to dynamically intercept am / app_process executions, rewriting com.termux arguments to com.termex and correcting --user 0 to the calling user ID.
 - Verified on User 10 (Island) via live terminal: termux-setup-storage rebuilds ~/storage symlinks (shared, downloads, dcim, documents, pictures, music, movies, audiobooks, podcasts, external-0, media-0) pointing to /storage/emulated/10 without errors.
 
-
-
+--------------------------------------------------------------------------------
+COMMIT 10: [6bc4210] - 2026-10-06 07:45:00 +0530
+MESSAGE: "Fix renameat2 and relative chdir redirection, component preservation, and add resilience test suite, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Hook renameat2() and raw syscall(__NR_renameat2) in termex-redirect.c so coreutils utilities (e.g. mv) correctly redirect upstream paths instead of failing with EACCES.
+- Intercept relative chdir() calls in termex-redirect.c against getcwd() so coreutils recursive operations (e.g. mkdir -p) traversing relative segments (data -> /data/user/10, com.termux -> com.termex) resolve without permission denial.
+- Expand redirect_path() to handle redundant/consecutive slashes and multi-user paths (/data/user/<userId>/com.termux).
+- Preserve Android component and Java package class names (e.g. com.termux.app.TermuxService) in sanitize_exec_argv() and TermuxInstaller.java when rewriting package identifiers in am command invocations.
+- Implement complete 6-phase resilience testing suite and specification (RESILIENCE_TEST_PLAN.md, tests/test_phase{1..6}.sh) with verified test logs (tests/phase{1..6}_result.log) validating environment hierarchy, native interposition edge cases, package management stress, IPC/signals/pipes, storage concurrency, and session lifecycle recovery.

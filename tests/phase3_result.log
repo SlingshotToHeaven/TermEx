@@ -1,0 +1,49 @@
+=== PHASE 3: Package Management Stress & Dependency Chains ===
+Test 3.1: Package database query (dpkg -l)
+ii  apt                        2.8.1-2                         aarch64      Front-end for the dpkg package manager
+ii  bash                       5.3.9                           aarch64      A sh-compatible shell that incorporates useful features from the Korn shell (ksh) and C shell (csh)
+ii  coreutils                  9.9                             aarch64      Basic file, shell and text manipulation utilities from the GNU project
+ii  dpkg                       1.22.6-5                        aarch64      Debian package management system
+ii  libsmartcols               2.41.2-1                        aarch64      Library for smart adaptive formatting of tabular data
+Test 3.2: Installing lightweight tool 'bc' via apt
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following NEW packages will be installed:
+  bc
+0 upgraded, 1 newly installed, 0 to remove and 53 not upgraded.
+Need to get 0 B/75.7 kB of archives.
+After this operation, 254 kB of additional disk space will be used.
+Selecting previously unselected package bc.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6181 files and directories currently installed.)
+Preparing to unpack .../bc_1.08.2-1_aarch64.deb ...
+Unpacking bc (1.08.2-1) ...
+Setting up bc (1.08.2-1) ...
+Test 3.3: Verify installed binary 'bc': OK (579)
+Test 3.4: Reinstall cycle (apt-get --reinstall install bc)
+Reading package lists...
+Building dependency tree...
+Reading state information...
+0 upgraded, 0 newly installed, 1 reinstalled, 0 to remove and 53 not upgraded.
+Need to get 0 B/75.7 kB of archives.
+After this operation, 0 B of additional disk space will be used.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6189 files and directories currently installed.)
+Preparing to unpack .../bc_1.08.2-1_aarch64.deb ...
+Unpacking bc (1.08.2-1) over (1.08.2-1) ...
+Setting up bc (1.08.2-1) ...
+Test 3.5: Remove cycle (apt-get remove -y bc)
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following packages were automatically installed and are no longer required:
+  flex m4
+Use 'apt autoremove' to remove them.
+The following packages will be REMOVED:
+  bc
+0 upgraded, 0 newly installed, 1 to remove and 53 not upgraded.
+After this operation, 254 kB disk space will be freed.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6189 files and directories currently installed.)
+Removing bc (1.08.2-1) ...
+Test 3.6: Verify 'bc' removal: OK (removed from /data/user/10/com.termex/files/usr/bin)
+Test 3.7: Purge cycle (dpkg -P bc)
+Phase 3: PASSED!

@@ -106,8 +106,8 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
         }
     }
 
-    // Skip leading '/'
-    if (*p == '/') {
+    // Skip leading '/' (including redundant consecutive slashes)
+    while (*p == '/') {
         p++;
     }
 
@@ -117,19 +117,21 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
     }
 
     const char* sub = p + 5; // after "data/"
+    while (*sub == '/') sub++; // skip redundant slashes
 
     // Case 1: "data/data"
     if (strncmp(sub, "data", 4) == 0) {
-        char c4 = sub[4];
-        if (c4 == '\0' || (c4 == '/' && sub[5] == '\0') || strncmp(sub + 4, ".dpkg-", 6) == 0) {
+        const char* after_data = sub + 4;
+        if (*after_data == '\0' || (*after_data == '/' && *(after_data + 1) == '\0') || strncmp(after_data, ".dpkg-", 6) == 0) {
             if (parent_app_dir_len > 0) {
-                snprintf(buffer, bufsize, "%s%s", parent_app_dir, c4 == '.' ? sub + 4 : "");
+                snprintf(buffer, bufsize, "%s%s", parent_app_dir, *after_data == '.' ? after_data : "");
                 return buffer;
             }
             return path;
         }
-        if (c4 == '/') {
-            const char* pkg = sub + 5; // after "data/data/"
+        if (*after_data == '/') {
+            const char* pkg = after_data;
+            while (*pkg == '/') pkg++; // skip redundant slashes
             if ((strncmp(pkg, "com.termux", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) ||
                 (strncmp(pkg, "com.termex", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0))) {
                 snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
@@ -137,22 +139,37 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
             }
         }
     }
-    // Case 2: "data/user/0"
-    else if (strncmp(sub, "user/0", 6) == 0) {
-        char c6 = sub[6];
-        if (c6 == '\0' || (c6 == '/' && sub[7] == '\0') || strncmp(sub + 6, ".dpkg-", 6) == 0) {
-            if (parent_app_dir_len > 0) {
-                snprintf(buffer, bufsize, "%s%s", parent_app_dir, c6 == '.' ? sub + 6 : "");
-                return buffer;
+    // Case 2: "data/user/<userId>"
+    else if (strncmp(sub, "user/", 5) == 0) {
+        const char* after_user = sub + 5;
+        while (*after_user == '/') after_user++;
+        
+        // Find end of user id digits
+        const char* user_end = after_user;
+        while (*user_end >= '0' && *user_end <= '9') user_end++;
+        
+        if (user_end > after_user) {
+            if (*user_end == '\0' || (*user_end == '/' && *(user_end + 1) == '\0') || strncmp(user_end, ".dpkg-", 6) == 0) {
+                if (parent_app_dir_len > 0) {
+                    snprintf(buffer, bufsize, "%s%s", parent_app_dir, *user_end == '.' ? user_end : "");
+                    return buffer;
+                }
+                return path;
             }
-            return path;
-        }
-        if (c6 == '/') {
-            const char* pkg = sub + 7; // after "data/user/0/"
-            if ((strncmp(pkg, "com.termux", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) ||
-                (strncmp(pkg, "com.termex", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0))) {
-                snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
-                return buffer;
+            if (*user_end == '/') {
+                const char* pkg = user_end + 1;
+                while (*pkg == '/') pkg++; // skip redundant slashes
+                if (strncmp(pkg, "com.termux", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) {
+                    snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
+                    return buffer;
+                }
+                if (strncmp(pkg, "com.termex", 10) == 0 && (pkg[10] == '\0' || pkg[10] == '/' || strncmp(pkg + 10, ".dpkg-", 6) == 0)) {
+                    // If referencing user 0's com.termex on a secondary user, redirect to active current_app_dir
+                    if (strncmp(after_user, "0/", 2) == 0) {
+                        snprintf(buffer, bufsize, "%s%s", current_app_dir, pkg + 10);
+                        return buffer;
+                    }
+                }
             }
         }
     }
@@ -409,8 +426,32 @@ typedef int (*orig_chdir_t)(const char*);
 int chdir(const char* path) {
     static orig_chdir_t orig = NULL;
     if (!orig) orig = (orig_chdir_t)dlsym(RTLD_NEXT, "chdir");
+    if (!path) return orig(path);
+
     char buf[1024];
-    return orig(redirect_path(path, buf, sizeof(buf)));
+    const char* rpath = redirect_path(path, buf, sizeof(buf));
+    if (rpath != path) {
+        return orig(rpath);
+    }
+
+    // If path is relative (e.g. coreutils mkdir -p stepping into "data" from "/data" or "com.termux" from "/data/user/10")
+    if (path[0] != '/') {
+        char cwd[512] = {0};
+        if (getcwd(cwd, sizeof(cwd))) {
+            char combined[1024];
+            if (strcmp(cwd, "/") == 0) {
+                snprintf(combined, sizeof(combined), "/%s", path);
+            } else {
+                snprintf(combined, sizeof(combined), "%s/%s", cwd, path);
+            }
+            const char* redirected_combined = redirect_path(combined, buf, sizeof(buf));
+            if (redirected_combined != combined) {
+                return orig(redirected_combined);
+            }
+        }
+    }
+
+    return orig(path);
 }
 
 // opendir
@@ -684,6 +725,54 @@ int renameat(int olddirfd, const char* oldpath, int newdirfd, const char* newpat
     return orig(olddirfd, redirect_path(oldpath, buf1, sizeof(buf1)), newdirfd, redirect_path(newpath, buf2, sizeof(buf2)));
 }
 
+// renameat2
+typedef int (*orig_renameat2_t)(int, const char*, int, const char*, unsigned int);
+int renameat2(int olddirfd, const char* oldpath, int newdirfd, const char* newpath, unsigned int flags) {
+    static orig_renameat2_t orig = NULL;
+    if (!orig) orig = (orig_renameat2_t)dlsym(RTLD_NEXT, "renameat2");
+    char buf1[1024], buf2[1024];
+    const char* rold = redirect_path(oldpath, buf1, sizeof(buf1));
+    const char* rnew = redirect_path(newpath, buf2, sizeof(buf2));
+    if (orig) {
+        return orig(olddirfd, rold, newdirfd, rnew, flags);
+    }
+#ifdef __NR_renameat2
+    return (int)syscall(__NR_renameat2, olddirfd, rold, newdirfd, rnew, flags);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+// syscall
+#include <sys/syscall.h>
+long syscall(long number, ...) {
+    typedef long (*orig_syscall_t)(long, ...);
+    static orig_syscall_t orig = NULL;
+    if (!orig) orig = (orig_syscall_t)dlsym(RTLD_NEXT, "syscall");
+
+    va_list args;
+    va_start(args, number);
+    long a1 = va_arg(args, long);
+    long a2 = va_arg(args, long);
+    long a3 = va_arg(args, long);
+    long a4 = va_arg(args, long);
+    long a5 = va_arg(args, long);
+    long a6 = va_arg(args, long);
+    va_end(args);
+
+#ifdef __NR_renameat2
+    if (number == __NR_renameat2) {
+        char buf1[1024], buf2[1024];
+        const char* rold = redirect_path((const char*)a2, buf1, sizeof(buf1));
+        const char* rnew = redirect_path((const char*)a4, buf2, sizeof(buf2));
+        return orig(number, a1, (long)rold, a3, (long)rnew, a5, a6);
+    }
+#endif
+
+    return orig(number, a1, a2, a3, a4, a5, a6);
+}
+
 static char** ensure_env(char* const envp[]) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
@@ -876,7 +965,21 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
             char* dst = buf;
             size_t remain = sizeof(buf) - 1;
             while (*src && remain > 0) {
-                if (strncmp(src, "com.termux", 10) == 0) {
+                // If this is a component reference "com.termux/com.termux."
+                if (strncmp(src, "com.termux/com.termux.", 22) == 0) {
+                    size_t plen = strlen(real_pkg);
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, real_pkg, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += 10; // skips "com.termux", leaving "/com.termux." intact!
+                } else if (strncmp(src, "com.termux", 10) == 0 &&
+                           // Only rewrite package prefix if NOT followed by ".app." or ".shared." (which are Java package names)
+                           strncmp(src, "com.termux.app", 14) != 0 &&
+                           strncmp(src, "com.termux.shared", 17) != 0 &&
+                           strncmp(src, "com.termux.terminal", 19) != 0 &&
+                           strncmp(src, "com.termux.view", 15) != 0 &&
+                           strncmp(src, "com.termux.filepicker", 21) != 0) {
                     size_t plen = strlen(real_pkg);
                     if (plen > remain) plen = remain;
                     memcpy(dst, real_pkg, plen);
