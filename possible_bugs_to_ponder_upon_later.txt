@@ -1,0 +1,62 @@
+# Possible Architectural Edge Cases and Bugs in TermEx (To Ponder Upon Later)
+
+This document catalogs potential edge cases, limitations, and architectural failure modes in TermEx resulting from the design choice of using userspace dynamic interposition (LD_PRELOAD + libc wrapping) and dynamic path redirection instead of kernel-level filesystem namespaces.
+
+---
+
+### 1. Mixed Libc Ecosystems (Android Bionic vs. glibc / musl)
+- **Problem**: Termux packages use Android Bionic libc (`libc.so`), but glibc environments (`glibc-repo`, `agy`, desktop environments, Box64/FEX) run under GNU libc (`ld-linux-aarch64.so.1` + `libc.so.6`).
+- **Symptom**: `LD_PRELOAD` is inherited across `execve()`. When a Bionic process spawns a glibc binary, glibc attempts to load `libtermex-redirect.so`. Because the redirect library depends on Bionic (`libdl.so`, `libc.so`), glibc fails to resolve `libdl.so` in its search paths and terminates with `Permission denied` or crashes due to ABI incompatibilities.
+- **Mitigation Needed**: Automatically strip `libtermex-redirect.so` from `LD_PRELOAD` when executing glibc loaders or glibc-linked ELF executables.
+
+---
+
+### 2. Direct Linux Syscalls Bypassing Libc (`asm volatile("svc 0")`)
+- **Problem**: `LD_PRELOAD` only intercepts calls to dynamically linked C library functions (`open`, `stat`, `execve`). Any program invoking kernel syscalls directly without going through `libc.so` completely bypasses `libtermex-redirect.so`.
+- **Affected Programs**:
+  - **Go binaries compiled with `CGO_ENABLED=0`**: Pure Go uses its own assembly syscall routines for filesystem access. If a Go binary has hardcoded paths pointing to `/data/data/com.termux/...`, it will make raw syscalls to the kernel and fail.
+  - **Rust / Zig / Assembler programs** that use direct syscall implementations or their own raw syscall backends instead of libc bindings.
+
+---
+
+### 3. Statically Linked Binaries (`-static`)
+- **Problem**: Statically linked ELF binaries do not load a dynamic linker (`/system/bin/linker64` or `ld-linux.so`). The Linux kernel loads and starts the executable directly without reading or honoring `LD_PRELOAD`.
+- **Symptom**: `libtermex-redirect.so` is never injected into statically linked processes. Any hardcoded paths within static binaries remain unredirected.
+
+---
+
+### 4. Kernel ELF Interpreter Loading (`PT_INTERP`)
+- **Problem**: When `execve()` executes a dynamically linked ELF binary, the Linux kernel (not userspace) parses the binary's `PT_INTERP` header and loads the interpreter.
+- **Symptom**: If an ELF binary specifies `PT_INTERP = /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`, on secondary users (e.g., User 10), the kernel itself cannot access `/data/data/com.termux` due to Android permissions (`EACCES` or `ENOENT`). The execve call fails before `LD_PRELOAD` or the interpreter can execute.
+- **Mitigation Needed**: In `execve()` interposition, parse the target ELF header. If `PT_INTERP` points to an inaccessible hardcoded path (e.g. `/data/data/com.termux/...`), rewrite the exec call to run the redirected interpreter directly with the binary as an argument.
+
+---
+
+### 5. `LD_PRELOAD` Sanitization by Tools and Environment Strippers
+- **Problem**: Programs or scripts that clean their environment (e.g., `env -i`, `sudo`, `login`, custom daemons, or certain Python/Node runner scripts) remove `LD_PRELOAD` and `LD_LIBRARY_PATH`.
+- **Symptom**: Subprocesses spawned from these scripts lose the interposition library. Bionic executables with `DT_RUNPATH` issues or hardcoded `/data/data/com.termux` fail to locate shared libraries or configuration files.
+- **Current Partial Mitigation**: `ensure_env()` reinjects `LD_PRELOAD` on `execve()`, but cannot protect against scripts that unset `LD_PRELOAD` internally before calling further commands in the same process.
+
+---
+
+### 6. Android System Binaries and Linker Restrictions
+- **Problem**: When a script invokes Android system tools (e.g., `/system/bin/sh`, `/system/bin/am`, `/system/bin/pm`, `app_process`), Android's linker enforces strict namespace and security restrictions.
+- **Symptom**: Starting in modern Android versions, the linker refuses to load non-system libraries from `LD_PRELOAD` into system binaries, printing linker warnings (`WARNING: linker: could not load library ...`) to stderr, which can break scripts that parse stdout/stderr cleanly.
+
+---
+
+### 7. File Descriptor and Pseudofilesystem Leaks (`/proc/self/*`)
+- **Problem**: Utilities that inspect process identity via `/proc` (e.g. `/proc/self/exe`, `/proc/self/cmdline`, `/proc/self/mountinfo`, `/proc/self/maps`) will observe the real paths (`/data/user/<userId>/com.termex/...`) and the real package name (`com.termex`).
+- **Symptom**: Any script or package that validates its environment by asserting that `/proc/self/exe` contains `com.termux` or that its package name is strictly `com.termux` will detect the mismatch and fail or abort.
+
+---
+
+### 8. Termux Add-on Plugins & Android IPC (Termux:API, Termux:GUI, Termux:Widget)
+- **Problem**: Add-on APKs use Android Intents, Broadcasts, and Content Providers explicitly bound to `com.termux` package name and signed permissions (`com.termux.permission.RUN_COMMAND`).
+- **Symptom**: Standard third-party plugins installed from F-Droid or Play Store target `com.termux` and will not communicate with `com.termex` unless also recompiled or patched with the matching package name and signature.
+
+---
+
+### 9. Hardcoded Path Sizes in Precompiled Buffers
+- **Problem**: The string `/data/data/com.termux` is 21 characters. On secondary Android users, the path is `/data/user/10/com.termex` (23 characters) or longer for multi-digit user IDs (`/data/user/100/...`).
+- **Symptom**: If an upstream C/C++ program allocates a fixed-size buffer exactly sized for `strlen("/data/data/com.termux/...")` or uses `PATH_MAX` assumptions that don't account for path expansions, buffer overruns or string truncations could theoretically occur.

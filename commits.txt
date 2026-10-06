@@ -127,3 +127,12 @@ DESCRIPTION:
 - Document every change made to the upstream Termux project to support multi-user profiles in changes-from-og-termux/.
 - Include detailed deep dives on package renaming (01), dynamic path resolution (02), libtermex-redirect.so native interposition (03), bootstrap patching (04), IPC broadcast/storage integration (05), and build optimization/UI polish (06).
 
+--------------------------------------------------------------------------------
+COMMIT 13: [c93d999] - 2026-10-06 15:45:00 +0530
+MESSAGE: "Fix glibc loader isolation in native interposition and catalog architectural edge cases, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Add check_is_glibc_binary() in termex-redirect.c to parse ELF PT_INTERP program headers and identify glibc executables (ld-linux-*.so*).
+- Isolate LD_PRELOAD in ensure_env() by stripping Bionic libtermex-redirect.so when spawning glibc loaders/binaries, preventing ABI mismatch and EACCES on missing libdl.so.
+- Document potential failure modes and architectural limitations of userspace dynamic interposition in possible_bugs_to_ponder_upon_later.txt.
+

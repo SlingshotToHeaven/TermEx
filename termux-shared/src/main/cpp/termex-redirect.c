@@ -14,6 +14,7 @@
 #include <utime.h>
 #include <sys/vfs.h>
 #include <sys/statvfs.h>
+#include <elf.h>
 
 static const char TARGET_PREFIX1[] = "/data/data/com.termux";
 static const size_t TARGET_LEN1 = sizeof(TARGET_PREFIX1) - 1;
@@ -773,7 +774,72 @@ long syscall(long number, ...) {
     return orig(number, a1, a2, a3, a4, a5, a6);
 }
 
-static char** ensure_env(char* const envp[]) {
+static int check_is_glibc_binary(const char* path) {
+    if (!path) return 0;
+    if (strstr(path, "ld-linux") != NULL || strstr(path, "/glibc/") != NULL) {
+        return 1;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    unsigned char e_ident[EI_NIDENT];
+    if (read(fd, e_ident, sizeof(e_ident)) != (ssize_t)sizeof(e_ident)) {
+        close(fd);
+        return 0;
+    }
+    if (memcmp(e_ident, ELFMAG, SELFMAG) != 0) {
+        close(fd);
+        return 0;
+    }
+
+    int is_glibc = 0;
+    if (e_ident[EI_CLASS] == ELFCLASS64) {
+        Elf64_Ehdr ehdr;
+        lseek(fd, 0, SEEK_SET);
+        if (read(fd, &ehdr, sizeof(ehdr)) == (ssize_t)sizeof(ehdr) && ehdr.e_phoff > 0 && ehdr.e_phnum > 0) {
+            for (int i = 0; i < ehdr.e_phnum && i < 64; i++) {
+                Elf64_Phdr phdr;
+                lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET);
+                if (read(fd, &phdr, sizeof(phdr)) != (ssize_t)sizeof(phdr)) break;
+                if (phdr.p_type == PT_INTERP && phdr.p_filesz > 0 && phdr.p_filesz < 512) {
+                    char interp[512] = {0};
+                    lseek(fd, phdr.p_offset, SEEK_SET);
+                    if (read(fd, interp, phdr.p_filesz) > 0) {
+                        interp[sizeof(interp) - 1] = '\0';
+                        if (strstr(interp, "ld-linux") != NULL || strstr(interp, "glibc") != NULL) {
+                            is_glibc = 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    } else if (e_ident[EI_CLASS] == ELFCLASS32) {
+        Elf32_Ehdr ehdr;
+        lseek(fd, 0, SEEK_SET);
+        if (read(fd, &ehdr, sizeof(ehdr)) == (ssize_t)sizeof(ehdr) && ehdr.e_phoff > 0 && ehdr.e_phnum > 0) {
+            for (int i = 0; i < ehdr.e_phnum && i < 64; i++) {
+                Elf32_Phdr phdr;
+                lseek(fd, ehdr.e_phoff + i * sizeof(Elf32_Phdr), SEEK_SET);
+                if (read(fd, &phdr, sizeof(phdr)) != (ssize_t)sizeof(phdr)) break;
+                if (phdr.p_type == PT_INTERP && phdr.p_filesz > 0 && phdr.p_filesz < 512) {
+                    char interp[512] = {0};
+                    lseek(fd, phdr.p_offset, SEEK_SET);
+                    if (read(fd, interp, phdr.p_filesz) > 0) {
+                        interp[sizeof(interp) - 1] = '\0';
+                        if (strstr(interp, "ld-linux") != NULL || strstr(interp, "glibc") != NULL) {
+                            is_glibc = 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    close(fd);
+    return is_glibc;
+}
+
+static char** ensure_env(char* const envp[], int is_glibc) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
     while (envp && envp[count]) {
@@ -806,14 +872,43 @@ static char** ensure_env(char* const envp[]) {
 
     int need_modify_preload = 0;
     char combined_preload[2048] = {0};
-    if (preload_idx >= 0 && redirect_so_path[0] != '\0') {
-        if (!strstr(envp[preload_idx], "libtermex-redirect.so")) {
-            snprintf(combined_preload, sizeof(combined_preload), "LD_PRELOAD=%s %s", redirect_so_path, envp[preload_idx] + 11);
+    if (is_glibc) {
+        // When executing glibc loaders/binaries, strip libtermex-redirect.so from LD_PRELOAD
+        if (preload_idx >= 0 && strstr(envp[preload_idx], "libtermex-redirect.so")) {
+            char temp_val[2048] = {0};
+            strncpy(temp_val, envp[preload_idx] + 11, sizeof(temp_val) - 1);
+            char* p = strstr(temp_val, "libtermex-redirect.so");
+            if (p) {
+                char* start = p;
+                while (start > temp_val && *(start - 1) != ' ' && *(start - 1) != ':') start--;
+                char* end = p + strlen("libtermex-redirect.so");
+                while (*end == ' ' || *end == ':') end++;
+                memmove(start, end, strlen(end) + 1);
+            }
+            // Trim leading/trailing whitespace or colons
+            char* trimmed = temp_val;
+            while (*trimmed == ' ' || *trimmed == ':') trimmed++;
+            size_t tlen = strlen(trimmed);
+            while (tlen > 0 && (trimmed[tlen - 1] == ' ' || trimmed[tlen - 1] == ':')) {
+                trimmed[--tlen] = '\0';
+            }
+            if (tlen > 0) {
+                snprintf(combined_preload, sizeof(combined_preload), "LD_PRELOAD=%s", trimmed);
+            } else {
+                combined_preload[0] = '\0';
+            }
             need_modify_preload = 1;
+        }
+    } else {
+        if (preload_idx >= 0 && redirect_so_path[0] != '\0') {
+            if (!strstr(envp[preload_idx], "libtermex-redirect.so")) {
+                snprintf(combined_preload, sizeof(combined_preload), "LD_PRELOAD=%s %s", redirect_so_path, envp[preload_idx] + 11);
+                need_modify_preload = 1;
+            }
         }
     }
 
-    int extra = (preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
+    int extra = (!is_glibc && preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
                 (libpath_idx < 0 && cur_libpath ? 1 : 0) +
                 (appdir_idx < 0 && cur_app_dir[0] ? 1 : 0);
 
@@ -821,9 +916,13 @@ static char** ensure_env(char* const envp[]) {
 
     char** new_env = malloc((count + extra + 1) * sizeof(char*));
     if (!new_env) return (char**)envp;
+    int write_pos = 0;
     for (int i = 0; i < count; i++) {
         if (i == preload_idx && need_modify_preload) {
-            new_env[i] = strdup(combined_preload);
+            if (combined_preload[0] != '\0') {
+                new_env[write_pos++] = strdup(combined_preload);
+            }
+            // If combined_preload is empty, we intentionally omitted it (stripping LD_PRELOAD)
         } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
                    (strstr(envp[i], TARGET_PREFIX1) || strstr(envp[i], TARGET_PREFIX2) ||
                     strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
@@ -1004,7 +1103,8 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
 
 // Helper to handle shebang in exec
 static int handle_shebang_exec(const char* rpath, char* const argv[], char* const envp[], orig_open_t o_open, int (*exec_func)(const char*, char* const[], char* const[])) {
-    char** safe_envp = ensure_env(envp);
+    int is_glibc = check_is_glibc_binary(rpath);
+    char** safe_envp = ensure_env(envp, is_glibc);
     int mod_argv = 0;
     char** eff_argv = sanitize_exec_argv(rpath, argv, &mod_argv);
     int fd = o_open ? o_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
