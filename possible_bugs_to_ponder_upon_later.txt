@@ -59,6 +59,11 @@ This document catalogs potential edge cases, limitations, and architectural fail
 
 ---
 
-### 9. Hardcoded Path Sizes in Precompiled Buffers
+### 9. Hardcoded Path Sizes in Precompiled Buffers [AUDITED & MITIGATED - Phase 5]
 - **Problem**: The string `/data/data/com.termux` is 21 characters. On secondary Android users, the path is `/data/user/10/com.termex` (23 characters) or longer for multi-digit user IDs (`/data/user/100/...`).
 - **Symptom**: If an upstream C/C++ program allocates a fixed-size buffer exactly sized for `strlen("/data/data/com.termux/...")` or uses `PATH_MAX` assumptions that don't account for path expansions, buffer overruns or string truncations could theoretically occur.
+- **Audit & Mitigation**:
+  - Audited all internal interception wrappers in `termex-redirect.c`: all temporary stack buffers (`tbuf`, `buf`, `interp_buf`, `new_path`) are consistently allocated to 1024 or 4096 bytes with strict `snprintf(buffer, bufsize, ...)` bounds checking.
+  - In `virtualize_returned_path()`, bounded path copying protects caller buffers (`to_copy = min(n, bufsiz)`).
+  - In `handle_shebang_exec()`, dynamic array allocation (`malloc((argc + 4) * sizeof(char*))`) guarantees zero stack overflow regardless of command length.
+  - In `ensure_env()`, expanded combined preload buffer to 2048 bytes and dynamic environment arrays allocate exact capacity based on variable count.
