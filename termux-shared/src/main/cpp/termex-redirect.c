@@ -85,6 +85,14 @@ static void init_redirect(void) {
         snprintf(default_libpath, sizeof(default_libpath), "%s/files/usr/lib", current_app_dir);
         // Expose to current process environment so child scripts and subshells inherit it immediately
         setenv("TERMEX_REAL_APP_DIR", current_app_dir, 0);
+        if (!getenv("TERMUX_VERSION")) {
+            setenv("TERMUX_VERSION", "0.118.0", 0);
+        }
+        if (!getenv("PREFIX")) {
+            char pfx[512];
+            snprintf(pfx, sizeof(pfx), "%s/files/usr", current_app_dir);
+            setenv("PREFIX", pfx, 0);
+        }
         char* slash = strrchr(current_app_dir, '/');
         if (slash && slash > current_app_dir) {
             size_t plen = slash - current_app_dir;
@@ -969,10 +977,13 @@ static inline int is_system_binary(const char* path) {
 static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
+    int termux_ver_idx = -1, prefix_idx = -1;
     while (envp && envp[count]) {
         if (strncmp(envp[count], "LD_PRELOAD=", 11) == 0) preload_idx = count;
         if (strncmp(envp[count], "LD_LIBRARY_PATH=", 16) == 0) libpath_idx = count;
         if (strncmp(envp[count], "TERMEX_REAL_APP_DIR=", 20) == 0) appdir_idx = count;
+        if (strncmp(envp[count], "TERMUX_VERSION=", 15) == 0) termux_ver_idx = count;
+        if (strncmp(envp[count], "PREFIX=", 7) == 0) prefix_idx = count;
         count++;
     }
     const char* cur_preload = getenv("LD_PRELOAD");
@@ -1002,9 +1013,12 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
 
     int need_modify_preload = 0;
     char combined_preload[2048] = {0};
-    int should_strip_preload = is_glibc || is_system;
-    if (should_strip_preload) {
-        // When executing glibc or Android system binaries, strip libtermex-redirect.so from LD_PRELOAD
+    if (is_glibc) {
+        // glibc's dynamic loader cannot load Android Bionic libraries. Completely strip LD_PRELOAD.
+        need_modify_preload = 1;
+        combined_preload[0] = '\0';
+    } else if (is_system) {
+        // Strip libtermex-redirect.so from LD_PRELOAD for system binaries
         if (preload_idx >= 0 && strstr(envp[preload_idx], "libtermex-redirect.so")) {
             char temp_val[2048] = {0};
             strncpy(temp_val, envp[preload_idx] + 11, sizeof(temp_val) - 1);
@@ -1039,9 +1053,11 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
         }
     }
 
-    int extra = (!should_strip_preload && preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
+    int extra = (!is_glibc && !is_system && preload_idx < 0 && redirect_so_path[0] != '\0' ? 1 : 0) +
                 (!is_system && libpath_idx < 0 && cur_libpath ? 1 : 0) +
-                (appdir_idx < 0 && cur_app_dir[0] ? 1 : 0);
+                (appdir_idx < 0 && cur_app_dir[0] ? 1 : 0) +
+                (termux_ver_idx < 0 ? 1 : 0) +
+                (prefix_idx < 0 && cur_app_dir[0] ? 1 : 0);
 
     if (extra == 0 && !need_modify_preload) return (char**)envp;
 
@@ -1054,7 +1070,7 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
                 if (combined_preload[0] != '\0') {
                     new_env[write_pos++] = strdup(combined_preload);
                 }
-                // If combined_preload is empty, it was stripped (e.g. for glibc)
+                // If combined_preload is empty, it was stripped (e.g. for glibc or bare system)
             } else {
                 new_env[write_pos++] = envp[i];
             }
@@ -1100,7 +1116,7 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
             new_env[write_pos++] = envp[i];
         }
     }
-    if (!should_strip_preload && preload_idx < 0 && redirect_so_path[0] != '\0') {
+    if (!is_glibc && !is_system && preload_idx < 0 && redirect_so_path[0] != '\0') {
         char buf[1024];
         snprintf(buf, sizeof(buf), "LD_PRELOAD=%s", redirect_so_path);
         new_env[write_pos++] = strdup(buf);
@@ -1113,6 +1129,14 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     if (appdir_idx < 0 && cur_app_dir[0]) {
         char buf[1024];
         snprintf(buf, sizeof(buf), "TERMEX_REAL_APP_DIR=%s", cur_app_dir);
+        new_env[write_pos++] = strdup(buf);
+    }
+    if (termux_ver_idx < 0) {
+        new_env[write_pos++] = strdup("TERMUX_VERSION=0.118.0");
+    }
+    if (prefix_idx < 0 && cur_app_dir[0]) {
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "PREFIX=%s/files/usr", cur_app_dir);
         new_env[write_pos++] = strdup(buf);
     }
     new_env[write_pos] = NULL;
@@ -1248,39 +1272,43 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
     char** eff_argv = sanitize_exec_argv(rpath, argv, &mod_argv);
 
     // Case 1: Dynamic ELF binary with hardcoded glibc loader interpreter
-    // On secondary users or com.termex, the kernel cannot load /data/data/com.termux/... directly.
-    // We rewrite the execution to launch the redirected loader directly:
-    // [redirected_loader, "--library-path", "$PREFIX/glibc/lib", rpath, ...args]
+    // On Android, glibc ELF binaries typically have PT_INTERP set to:
+    // - /data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1
+    // - /lib/ld-linux-aarch64.so.1
+    // The kernel cannot load these directly. We rewrite the execution to launch
+    // the local glibc dynamic loader directly:
+    // [glibc_loader, "--library-path", "$PREFIX/glibc/lib", rpath, ...args]
     if (is_glibc && elf_interp[0] != '\0' && strstr(elf_interp, "ld-linux") != NULL) {
         char interp_buf[1024];
         const char* rinterp = redirect_path(elf_interp, interp_buf, sizeof(interp_buf));
-        // If the interpreter in the ELF is redirected (e.g. /data/data/com.termux/... -> /data/user/0/com.termex/...)
-        // or if running directly on TermEx where kernel cannot load com.termux's ld-linux:
-        if (rinterp != elf_interp || access(rinterp, X_OK) == 0) {
-            char glibc_lib_dir[512];
-            if (current_app_dir[0]) {
-                snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s/files/usr/glibc/lib", current_app_dir);
-            } else {
-                // Fallback to dirname of rinterp
-                snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s", rinterp);
-                char* last_slash = strrchr(glibc_lib_dir, '/');
-                if (last_slash) *last_slash = '\0';
-            }
+        char glibc_loader_path[512] = {0};
+        char glibc_lib_dir[512] = {0};
 
+        if (current_app_dir[0]) {
+            snprintf(glibc_loader_path, sizeof(glibc_loader_path), "%s/files/usr/glibc/lib/ld-linux-aarch64.so.1", current_app_dir);
+            snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s/files/usr/glibc/lib", current_app_dir);
+        } else if (rinterp != elf_interp || access(rinterp, X_OK) == 0) {
+            snprintf(glibc_loader_path, sizeof(glibc_loader_path), "%s", rinterp);
+            snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s", rinterp);
+            char* last_slash = strrchr(glibc_lib_dir, '/');
+            if (last_slash) *last_slash = '\0';
+        }
+
+        if (glibc_loader_path[0] && access(glibc_loader_path, X_OK) == 0) {
             int argc = 0;
             while (eff_argv && eff_argv[argc]) argc++;
-            // New argv: [rinterp, "--library-path", glibc_lib_dir, rpath, eff_argv[1] ... eff_argv[argc-1], NULL]
+            // New argv: [glibc_loader_path, "--library-path", glibc_lib_dir, rpath, eff_argv[1] ... eff_argv[argc-1], NULL]
             // Need (argc - 1) original trailing args + 4 prefix slots + 1 NULL = argc + 4
             char** new_argv = malloc((argc + 4) * sizeof(char*));
             if (new_argv) {
-                new_argv[0] = (char*)rinterp;
+                new_argv[0] = glibc_loader_path;
                 new_argv[1] = "--library-path";
                 new_argv[2] = glibc_lib_dir;
                 new_argv[3] = (char*)rpath;
                 for (int i = 1; i < argc; i++) new_argv[i + 3] = eff_argv[i];
                 new_argv[argc + 3] = NULL;
 
-                int ret = exec_func(rinterp, new_argv, safe_envp);
+                int ret = exec_func(glibc_loader_path, new_argv, safe_envp);
                 free(new_argv);
                 if (mod_argv) {
                     for (int i = 0; i < argc; i++) {

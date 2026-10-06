@@ -185,3 +185,14 @@ DESCRIPTION:
 - Add dladdr((void*)init_redirect, &dli) self-discovery fallback in init_redirect: automatically determines current_app_dir from the loaded library's path if environment variables are stripped.
 - Call setenv("TERMEX_REAL_APP_DIR", ...) in init_redirect to ensure child processes and subshells automatically inherit active user pathing without requiring external scripts.
 - Verified on Samsung Galaxy device: pkg update, pkg upgrade, and pkg install (clang, ninja) run cleanly without GPG or TLS errors.
+
+COMMIT 20: [ba11ddb] - 2026-10-06 19:50:00 +0530
+MESSAGE: "Fix agy CLI by isolating glibc dynamic linker and auto-providing native Termux environment, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Fix agy (Antigravity CLI) execution failure under TermEx:
+  1. Complete LD_PRELOAD purging for glibc binaries in ensure_env(): glibc's dynamic loader (ld-linux-aarch64.so.1) cannot link against Android Bionic libraries (such as libtermex-redirect.so), failing with 'libdl.so: cannot open shared object file: Permission denied'. Setting LD_PRELOAD to empty/unsetting it for all glibc executions eliminates this collision.
+  2. Dynamic loader path resolution in handle_shebang_exec(): recognized that glibc binaries requesting '/lib/ld-linux-aarch64.so.1' or '$PREFIX/glibc/lib/ld-linux-aarch64.so.1' cannot be loaded directly by the Android kernel; automatically rewritten to invoke the package's glibc loader with '--library-path $PREFIX/glibc/lib'.
+  3. Environment auto-provisioning: agy helper performs a strict check for PREFIX and TERMUX_VERSION (exiting with code 1 if missing). Updated init_redirect() and ensure_env() to automatically set TERMUX_VERSION="0.118.0" and PREFIX="$current_app_dir/files/usr" if absent.
+- Verified on Samsung Galaxy live device: `agy --version` outputs 1.3.0 cleanly, `agy --help` displays full CLI commands, and `pkg update -y` runs with zero regressions.
+
