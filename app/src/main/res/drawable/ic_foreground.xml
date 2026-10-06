@@ -5,9 +5,9 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Ambient Neon Bloom Glow around prompt -->
+    <!-- Soft Ambient Ice-Cyan Bloom Aura -->
     <path
-        android:fillAlpha="0.18"
+        android:fillAlpha="0.14"
         android:pathData="M31,35 h12 l15,19 l-15,19 h-12 l15,-19 Z">
         <aapt:attr name="android:fillColor">
             <gradient
@@ -16,13 +16,13 @@
                 android:endX="58"
                 android:endY="73"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#FF00F5FF"/>
-                <item android:offset="1.0" android:color="#FFFF0080"/>
+                <item android:offset="0.0" android:color="#FF00E5FF"/>
+                <item android:offset="1.0" android:color="#FF0091EA"/>
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Terminal Chevron '>' with Cyberpunk Cyan-to-Magenta linear gradient -->
+    <!-- Terminal Chevron '>' with Hyper Electric Cyan & Ice Sheen Gradient -->
     <path
         android:pathData="M34,38
                           h6
@@ -38,14 +38,14 @@
                 android:endX="52"
                 android:endY="70"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#FF00F5FF"/>
-                <item android:offset="0.55" android:color="#FFFF0080"/>
-                <item android:offset="1.0" android:color="#FFA020F0"/>
+                <item android:offset="0.0" android:color="#FFE0F7FA"/>
+                <item android:offset="0.35" android:color="#FF00E5FF"/>
+                <item android:offset="1.0" android:color="#FF0091EA"/>
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Terminal Cursor '_' with Neon Magenta-to-Purple linear gradient -->
+    <!-- Terminal Cursor '_' with Crisp Laser Cyan Gradient -->
     <path
         android:pathData="M56,66
                           h18
@@ -59,15 +59,15 @@
                 android:endX="74"
                 android:endY="70"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#FFFF0080"/>
-                <item android:offset="1.0" android:color="#FFB5179E"/>
+                <item android:offset="0.0" android:color="#FF00E5FF"/>
+                <item android:offset="1.0" android:color="#FF0091EA"/>
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Glowing Accent Prompt Dot in Cyber Cyan -->
+    <!-- Glowing Accent Prompt Dot in Brilliant Frost Cyan -->
     <path
         android:pathData="M78,67 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0 Z"
-        android:fillColor="#FF00F5FF"/>
+        android:fillColor="#FFB2EBF2"/>
 
 </vector>
