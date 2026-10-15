@@ -254,6 +254,7 @@ final class TermuxInstaller {
                     }
 
                     copyRedirectLibraryIfNeeded(activity);
+                    createWhatIsTermExFileIfNeeded(activity);
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 
@@ -496,6 +497,65 @@ final class TermuxInstaller {
             }
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Failed to patch bin scripts: " + e.getMessage());
+        }
+    }
+
+    public static void createWhatIsTermExFileIfNeeded(Context context) {
+        try {
+            File homeDir = TermuxConstants.TERMUX_HOME_DIR;
+            ensureDirectoryExists(homeDir);
+            File introFile = new File(homeDir, "WhatIsTermEx.txt");
+            if (!introFile.exists()) {
+                String intro =
+                    "================================================================================\n" +
+                    "                         Welcome to TermEx!\n" +
+                    "================================================================================\n\n" +
+                    "TermEx is an enhanced terminal emulator and Linux environment for Android,\n" +
+                    "built for seamless execution across multi-user environments, work profiles,\n" +
+                    "and modern developer toolchains.\n\n" +
+                    "--------------------------------------------------------------------------------\n" +
+                    "Key Features & Architecture\n" +
+                    "--------------------------------------------------------------------------------\n\n" +
+                    "1. Multi-User & Work Profile Support:\n" +
+                    "   - TermEx runs out of the box in secondary user profiles and work profile\n" +
+                    "     containers (Shelter, Island, etc.).\n" +
+                    "   - Standard Termux paths (/data/data/com.termux) are transparently redirected\n" +
+                    "     to your profile's storage directory via the native libtermex-redirect.so\n" +
+                    "     interposition layer.\n\n" +
+                    "2. Native glibc & Toolchain Isolation:\n" +
+                    "   - Includes custom runtime loader support for glibc-based binaries.\n" +
+                    "   - Run tools like Google Antigravity CLI (agy), Node.js, and modern compilers\n" +
+                    "     without manual patching or dynamic linker permission errors.\n\n" +
+                    "3. Seamless tmux & Unix Domain Sockets:\n" +
+                    "   - TermEx transparently interposes AF_UNIX bind() and connect() system calls,\n" +
+                    "     ensuring tmux servers and local socket services operate reliably across\n" +
+                    "     Android's Linux sandboxes.\n\n" +
+                    "4. Package Management:\n" +
+                    "   - Full compatibility with the Termux package ecosystem:\n" +
+                    "     * pkg update\n" +
+                    "     * pkg install <package-name>\n" +
+                    "     * pkg search <query>\n\n" +
+                    "--------------------------------------------------------------------------------\n" +
+                    "Quick Tips & Getting Started\n" +
+                    "--------------------------------------------------------------------------------\n\n" +
+                    "- Set up Android storage access:\n" +
+                    "    termux-setup-storage\n\n" +
+                    "- Check package updates:\n" +
+                    "    pkg update\n\n" +
+                    "- Run the Google Antigravity CLI:\n" +
+                    "    agy --help\n\n" +
+                    "- Documentation & Community:\n" +
+                    "    https://github.com/IshikawaStone/TermEx\n\n" +
+                    "================================================================================\n";
+                try (FileOutputStream fos = new FileOutputStream(introFile)) {
+                    fos.write(intro.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                //noinspection OctalInteger
+                Os.chmod(introFile.getAbsolutePath(), 0644);
+                Logger.logInfo(LOG_TAG, "Created WhatIsTermEx.txt in home directory.");
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to create WhatIsTermEx.txt: " + e.getMessage());
         }
     }
 

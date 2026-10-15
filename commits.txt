@@ -207,4 +207,15 @@ DESCRIPTION:
 - Recompile libtermex-redirect.so across all ABIs and package into debug APK.
 - Verified on live Samsung Galaxy device: tmux new-session, tmux ls, and tmux attach operate cleanly.
 
+COMMIT 22: [755cad7] - 2026-10-16 01:15:00 +0530
+MESSAGE: "Create WhatIsTermEx.txt in home directory during bootstrap setup, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement createWhatIsTermExFileIfNeeded() in TermuxInstaller.java:
+  - Automatically writes WhatIsTermEx.txt into the home folder ($HOME / TermuxConstants.TERMUX_HOME_DIR) upon completion of bootstrap setup on fresh installs.
+  - Documents TermEx's multi-user / work profile architecture, native libtermex-redirect.so path virtualization, isolated glibc / Antigravity CLI (agy) support, tmux socket interposition, and package management essentials.
+  - Ensures proper permissions (0644) and non-destructive behavior (does not overwrite existing user modifications).
+- Built debug APK and verified installation.
+
+
 
