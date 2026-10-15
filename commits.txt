@@ -196,3 +196,15 @@ DESCRIPTION:
   3. Environment auto-provisioning: agy helper performs a strict check for PREFIX and TERMUX_VERSION (exiting with code 1 if missing). Updated init_redirect() and ensure_env() to automatically set TERMUX_VERSION="0.118.0" and PREFIX="$current_app_dir/files/usr" if absent.
 - Verified on Samsung Galaxy live device: `agy --version` outputs 1.3.0 cleanly, `agy --help` displays full CLI commands, and `pkg update -y` runs with zero regressions.
 
+COMMIT 21: [fbbc178] - 2026-10-16 00:15:00 +0530
+MESSAGE: "Intercept connect and bind for AF_UNIX sockets to support tmux, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement connect() and bind() interposition in termex-redirect.c:
+  - Intercept sockaddr_un pathname sockets (non-abstract, sun_path[0] != '\0').
+  - Transparently redirect socket paths referencing /data/data/com.termux/... or /data/user/0/com.termux/... to the active application directory ($current_app_dir/...).
+  - Fixes tmux server and client socket communication failure ('error connecting to /data/data/com.termux/files/usr/var/run/tmux-.../default (Permission denied)').
+- Recompile libtermex-redirect.so across all ABIs and package into debug APK.
+- Verified on live Samsung Galaxy device: tmux new-session, tmux ls, and tmux attach operate cleanly.
+
+

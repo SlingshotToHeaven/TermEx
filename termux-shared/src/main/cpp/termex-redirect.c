@@ -15,6 +15,8 @@
 #include <sys/vfs.h>
 #include <sys/statvfs.h>
 #include <elf.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 static const char TARGET_PREFIX1[] = "/data/data/com.termux";
 static const size_t TARGET_LEN1 = sizeof(TARGET_PREFIX1) - 1;
@@ -624,6 +626,53 @@ int symlink(const char* target, const char* linkpath) {
     if (!orig) orig = (orig_symlink_t)dlsym(RTLD_NEXT, "symlink");
     char buf1[1024], buf2[1024];
     return orig(redirect_path(target, buf1, sizeof(buf1)), redirect_path(linkpath, buf2, sizeof(buf2)));
+}
+
+// connect
+typedef int (*orig_connect_t)(int, const struct sockaddr*, socklen_t);
+int connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
+    static orig_connect_t orig = NULL;
+    if (!orig) orig = (orig_connect_t)dlsym(RTLD_NEXT, "connect");
+    if (addr && addr->sa_family == AF_UNIX && addrlen > (socklen_t)sizeof(sa_family_t)) {
+        const struct sockaddr_un* un = (const struct sockaddr_un*)addr;
+        // Only redirect pathname unix sockets (non-abstract, sun_path[0] != '\0')
+        if (un->sun_path[0] != '\0') {
+            char buf[1024];
+            const char* rpath = redirect_path(un->sun_path, buf, sizeof(buf));
+            if (rpath != un->sun_path) {
+                struct sockaddr_un new_un;
+                memset(&new_un, 0, sizeof(new_un));
+                new_un.sun_family = AF_UNIX;
+                strncpy(new_un.sun_path, rpath, sizeof(new_un.sun_path) - 1);
+                socklen_t new_len = sizeof(sa_family_t) + strlen(new_un.sun_path) + 1;
+                return orig(sockfd, (const struct sockaddr*)&new_un, new_len);
+            }
+        }
+    }
+    return orig(sockfd, addr, addrlen);
+}
+
+// bind
+typedef int (*orig_bind_t)(int, const struct sockaddr*, socklen_t);
+int bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
+    static orig_bind_t orig = NULL;
+    if (!orig) orig = (orig_bind_t)dlsym(RTLD_NEXT, "bind");
+    if (addr && addr->sa_family == AF_UNIX && addrlen > (socklen_t)sizeof(sa_family_t)) {
+        const struct sockaddr_un* un = (const struct sockaddr_un*)addr;
+        if (un->sun_path[0] != '\0') {
+            char buf[1024];
+            const char* rpath = redirect_path(un->sun_path, buf, sizeof(buf));
+            if (rpath != un->sun_path) {
+                struct sockaddr_un new_un;
+                memset(&new_un, 0, sizeof(new_un));
+                new_un.sun_family = AF_UNIX;
+                strncpy(new_un.sun_path, rpath, sizeof(new_un.sun_path) - 1);
+                socklen_t new_len = sizeof(sa_family_t) + strlen(new_un.sun_path) + 1;
+                return orig(sockfd, (const struct sockaddr*)&new_un, new_len);
+            }
+        }
+    }
+    return orig(sockfd, addr, addrlen);
 }
 
 // symlinkat
