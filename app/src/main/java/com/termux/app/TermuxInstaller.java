@@ -438,6 +438,7 @@ final class TermuxInstaller {
         }
 
         patchBinScriptsIfNeeded();
+        createWhatIsTermExFileIfNeeded(context);
     }
 
     public static void patchBinScriptsIfNeeded() {

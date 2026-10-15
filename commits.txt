@@ -217,5 +217,14 @@ DESCRIPTION:
   - Ensures proper permissions (0644) and non-destructive behavior (does not overwrite existing user modifications).
 - Built debug APK and verified installation.
 
+COMMIT 23: [80c2ead] - 2026-10-16 01:17:00 +0530
+MESSAGE: "Ensure WhatIsTermEx.txt is initialized via copyRedirectLibraryIfNeeded, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Invoke createWhatIsTermExFileIfNeeded(context) inside copyRedirectLibraryIfNeeded(context) in TermuxInstaller.java:
+  - Ensures WhatIsTermEx.txt is safely created not only during initial bootstrap setup, but also whenever the redirect library is initialized if missing from the user's home directory.
+  - Verified on live connected device: WhatIsTermEx.txt created with mode 0644 in $HOME.
+
+
 
 
