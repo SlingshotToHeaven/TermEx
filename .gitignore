@@ -7,6 +7,7 @@ build/
 release/
 *.apk
 *.so
+!app/src/main/assets/*.so
 .externalNativeBuild
 .cxx
 *.zip
@@ -37,3 +38,4 @@ local.properties
 .swp
 ehthumbs.db
 Thumbs.db
+Sandbox/

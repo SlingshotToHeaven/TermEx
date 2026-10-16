@@ -27,7 +27,12 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -437,8 +442,129 @@ final class TermuxInstaller {
             Logger.logError(LOG_TAG, "Failed to install libtermex-redirect.so: " + e.getMessage());
         }
 
+        setupGlibcEnvironmentIfNeeded(context);
         patchBinScriptsIfNeeded();
         createWhatIsTermExFileIfNeeded(context);
+    }
+
+    public static void installGlibcRedirectLibraryIfNeeded(Context context) {
+        try {
+            File glibcDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "glibc");
+            if (!glibcDir.exists() || !glibcDir.isDirectory()) return;
+
+            File targetDir = new File(glibcDir, "lib");
+            ensureDirectoryExists(targetDir);
+            File targetLib = new File(targetDir, "libtermex-redirect-glibc.so");
+            if (!targetLib.exists()) {
+                try (InputStream is = context.getAssets().open("libtermex-redirect-glibc.so");
+                     FileOutputStream fos = new FileOutputStream(targetLib)) {
+                    byte[] buf = new byte[8192];
+                    int r;
+                    while ((r = is.read(buf)) > 0) {
+                        fos.write(buf, 0, r);
+                    }
+                }
+                //noinspection OctalInteger
+                Os.chmod(targetLib.getAbsolutePath(), 0755);
+                Logger.logInfo(LOG_TAG, "Installed libtermex-redirect-glibc.so into " + targetLib.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to install libtermex-redirect-glibc.so: " + e.getMessage());
+        }
+    }
+
+    public static void patchBinaryTermuxToTermex(File file) {
+        if (file == null || !file.exists() || !file.isFile() || !file.canRead() || !file.canWrite()) return;
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw");
+             FileChannel channel = raf.getChannel()) {
+            long size = channel.size();
+            if (size < 100 || size > 50 * 1024 * 1024) return;
+            MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, size);
+            byte[] from = "com.termux".getBytes(StandardCharsets.UTF_8);
+            byte[] to = TermuxConstants.TERMUX_PACKAGE_NAME.getBytes(StandardCharsets.UTF_8);
+            if (from.length != to.length) return;
+
+            int limit = (int) size - from.length;
+            boolean modified = false;
+            for (int i = 0; i <= limit; i++) {
+                boolean match = true;
+                for (int j = 0; j < from.length; j++) {
+                    if (buffer.get(i + j) != from[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    for (int j = 0; j < to.length; j++) {
+                        buffer.put(i + j, to[j]);
+                    }
+                    modified = true;
+                    i += from.length - 1;
+                }
+            }
+            if (modified) {
+                buffer.force();
+                Logger.logInfo(LOG_TAG, "Patched " + file.getName() + " com.termux -> " + TermuxConstants.TERMUX_PACKAGE_NAME);
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed patching " + file.getName() + ": " + e.getMessage());
+        }
+    }
+
+    public static void setupGlibcEnvironmentIfNeeded(Context context) {
+        try {
+            File glibcDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "glibc");
+            if (!glibcDir.exists() || !glibcDir.isDirectory()) return;
+
+            installGlibcRedirectLibraryIfNeeded(context);
+
+            File etcDir = new File(glibcDir, "etc");
+            ensureDirectoryExists(etcDir);
+
+            // 1. nsswitch.conf: local files first then dns for reliable offline name resolution
+            File nssFile = new File(etcDir, "nsswitch.conf");
+            if (!nssFile.exists()) {
+                String nssContent = "hosts: files dns\nnetworks: files\nprotocols: files\nservices: files\nethers: files\nrpc: files\n";
+                try (FileOutputStream fos = new FileOutputStream(nssFile)) {
+                    fos.write(nssContent.getBytes(StandardCharsets.UTF_8));
+                }
+                //noinspection OctalInteger
+                Os.chmod(nssFile.getAbsolutePath(), 0644);
+                Logger.logInfo(LOG_TAG, "Created glibc nsswitch.conf");
+            }
+
+            // 2. hosts link
+            File hostsFile = new File(etcDir, "hosts");
+            if (!hostsFile.exists()) {
+                File targetHosts = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "etc/hosts");
+                if (targetHosts.exists()) {
+                    try {
+                        Os.symlink(targetHosts.getAbsolutePath(), hostsFile.getAbsolutePath());
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // 3. ld.so.preload
+            File preloadFile = new File(etcDir, "ld.so.preload");
+            File glibcLib = new File(glibcDir, "lib/libtermex-redirect-glibc.so");
+            if (glibcLib.exists() && !preloadFile.exists()) {
+                try (FileOutputStream fos = new FileOutputStream(preloadFile)) {
+                    fos.write((glibcLib.getAbsolutePath() + "\n").getBytes(StandardCharsets.UTF_8));
+                }
+                //noinspection OctalInteger
+                Os.chmod(preloadFile.getAbsolutePath(), 0644);
+                Logger.logInfo(LOG_TAG, "Created glibc ld.so.preload");
+            }
+
+            // 4. In-place binary patch of libc.so.6 and ld-linux-aarch64.so.1
+            File libcFile = new File(glibcDir, "lib/libc.so.6");
+            File ldFile = new File(glibcDir, "lib/ld-linux-aarch64.so.1");
+            patchBinaryTermuxToTermex(libcFile);
+            patchBinaryTermuxToTermex(ldFile);
+
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to setup glibc environment: " + e.getMessage());
+        }
     }
 
     public static void patchBinScriptsIfNeeded() {

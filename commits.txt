@@ -225,6 +225,27 @@ DESCRIPTION:
   - Ensures WhatIsTermEx.txt is safely created not only during initial bootstrap setup, but also whenever the redirect library is initialized if missing from the user's home directory.
   - Verified on live connected device: WhatIsTermEx.txt created with mode 0644 in $HOME.
 
+COMMIT 24: [4bf0127] - 2026-10-16 22:25:00 +0530
+MESSAGE: "feat: Universal glibc path virtualization and offline localhost DNS resolution, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Architect and deploy universal glibc path virtualization layer on branch feat/universal-glibc-redirect:
+  1. Glibc Name Resolution & Offline Fix:
+     - Configured $PREFIX/glibc/etc/nsswitch.conf with 'hosts: files dns'.
+     - Verified symlink to $PREFIX/etc/hosts (containing 127.0.0.1 localhost).
+     - Resolves 'localhost' in 0ms offline without touching external DNS, eliminating 'listen tcp: lookup localhost: Temporary failure in name resolution' when Wi-Fi/hotspot is off.
+  2. In-Place Binary Patcher for libc.so.6 & ld-linux-aarch64.so.1:
+     - Added memory-mapped in-place string patcher (patchBinaryTermuxToTermex in Java, patch_binary_com_termux in C) that rewrites hardcoded 'com.termux' paths to 'com.termex' in-place (10-byte 1:1 replacement) without altering offsets or hashes.
+     - Runs in ~7ms with timestamp stamp file cache; automatically repairs libraries after 'pkg upgrade' or fresh installs.
+  3. Dedicated Native Glibc Redirection Library (libtermex-redirect-glibc.so):
+     - Implemented termux-shared/src/main/cpp/termex-redirect-glibc.c targeting aarch64-linux-gnu.
+     - Interposes open, open64, openat, openat64, creat, creat64, stat, stat64, lstat, lstat64, fstatat, fstatat64, access, faccessat, readlink, readlinkat, chdir, mkdir, mkdirat, unlink, unlinkat, rmdir, rename, renameat, renameat2, execve, execvpe, opendir, bind, connect.
+     - Configured via $PREFIX/glibc/etc/ld.so.preload and dynamic --preload flag in handle_shebang_exec.
+  4. Exec Wrapper Enhancement in termex-redirect.c:
+     - Updated handle_shebang_exec to pass --library-path, --preload, and --argv0 to ld-linux-aarch64.so.1.
+  5. Tested and verified on live Samsung Galaxy device: agy, tmux, git, and pkg execute with zero errors.
+
+
 
 
 

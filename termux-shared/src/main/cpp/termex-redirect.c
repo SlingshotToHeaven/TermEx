@@ -14,6 +14,7 @@
 #include <utime.h>
 #include <sys/vfs.h>
 #include <sys/statvfs.h>
+#include <sys/mman.h>
 #include <elf.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -1023,6 +1024,105 @@ static inline int is_system_binary(const char* path) {
             strncmp(path, "/odm/", 5) == 0);
 }
 
+static void patch_binary_com_termux(const char* filepath, const char* target_pkg) {
+    if (!filepath || !target_pkg || strlen(target_pkg) != 10) return;
+    int fd = open(filepath, O_RDWR | O_CLOEXEC);
+    if (fd < 0) return;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < 100) {
+        close(fd);
+        return;
+    }
+    void* map = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) {
+        close(fd);
+        return;
+    }
+    char* data = (char*)map;
+    size_t len = st.st_size;
+    const char needle[] = "com.termux";
+    size_t needle_len = 10;
+    int modified = 0;
+    for (size_t i = 0; i <= len - needle_len; i++) {
+        if (memcmp(data + i, needle, needle_len) == 0) {
+            memcpy(data + i, target_pkg, needle_len);
+            modified = 1;
+            i += needle_len - 1;
+        }
+    }
+    if (modified) {
+        msync(map, len, MS_SYNC);
+    }
+    munmap(map, len);
+    close(fd);
+}
+
+static void ensure_glibc_environment(const char* app_dir) {
+    if (!app_dir || app_dir[0] == '\0') return;
+
+    char libc_path[512];
+    snprintf(libc_path, sizeof(libc_path), "%s/files/usr/glibc/lib/libc.so.6", app_dir);
+    char ld_path[512];
+    snprintf(ld_path, sizeof(ld_path), "%s/files/usr/glibc/lib/ld-linux-aarch64.so.1", app_dir);
+
+    struct stat st;
+    if (stat(libc_path, &st) == 0 && st.st_size > 1000) {
+        char stamp_path[512];
+        snprintf(stamp_path, sizeof(stamp_path), "%s/files/usr/glibc/lib/.termex_libc_stamp", app_dir);
+        struct stat stamp_st;
+        if (stat(stamp_path, &stamp_st) != 0 || stamp_st.st_mtime < st.st_mtime) {
+            const char* target_pkg = "com.termex";
+            const char* slash = strrchr(app_dir, '/');
+            if (slash && *(slash + 1) && strlen(slash + 1) == 10) {
+                target_pkg = slash + 1;
+            }
+            patch_binary_com_termux(libc_path, target_pkg);
+            patch_binary_com_termux(ld_path, target_pkg);
+
+            int sfd = open(stamp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+            if (sfd >= 0) close(sfd);
+        }
+    }
+
+    char etc_dir[512];
+    snprintf(etc_dir, sizeof(etc_dir), "%s/files/usr/glibc/etc", app_dir);
+    mkdir(etc_dir, 0755);
+
+    char nss_path[512];
+    snprintf(nss_path, sizeof(nss_path), "%s/files/usr/glibc/etc/nsswitch.conf", app_dir);
+    if (access(nss_path, F_OK) != 0) {
+        int nfd = open(nss_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (nfd >= 0) {
+            const char nss_conf[] = "hosts: files dns\nnetworks: files\nprotocols: files\nservices: files\nethers: files\nrpc: files\n";
+            write(nfd, nss_conf, sizeof(nss_conf) - 1);
+            close(nfd);
+        }
+    }
+
+    char hosts_path[512];
+    snprintf(hosts_path, sizeof(hosts_path), "%s/files/usr/glibc/etc/hosts", app_dir);
+    if (access(hosts_path, F_OK) != 0) {
+        char target_hosts[512];
+        snprintf(target_hosts, sizeof(target_hosts), "%s/files/usr/etc/hosts", app_dir);
+        if (access(target_hosts, F_OK) == 0) {
+            symlink(target_hosts, hosts_path);
+        }
+    }
+
+    char preload_conf[512];
+    snprintf(preload_conf, sizeof(preload_conf), "%s/files/usr/glibc/etc/ld.so.preload", app_dir);
+    char glibc_redirect[512];
+    snprintf(glibc_redirect, sizeof(glibc_redirect), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", app_dir);
+    if (access(glibc_redirect, F_OK) == 0 && access(preload_conf, F_OK) != 0) {
+        int pfd = open(preload_conf, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (pfd >= 0) {
+            write(pfd, glibc_redirect, strlen(glibc_redirect));
+            write(pfd, "\n", 1);
+            close(pfd);
+        }
+    }
+}
+
 static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
@@ -1344,18 +1444,34 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
         }
 
         if (glibc_loader_path[0] && access(glibc_loader_path, X_OK) == 0) {
+            ensure_glibc_environment(current_app_dir);
+
+            char glibc_preload[512] = {0};
+            if (current_app_dir[0]) {
+                snprintf(glibc_preload, sizeof(glibc_preload), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", current_app_dir);
+            }
+            int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
+
             int argc = 0;
             while (eff_argv && eff_argv[argc]) argc++;
-            // New argv: [glibc_loader_path, "--library-path", glibc_lib_dir, rpath, eff_argv[1] ... eff_argv[argc-1], NULL]
-            // Need (argc - 1) original trailing args + 4 prefix slots + 1 NULL = argc + 4
-            char** new_argv = malloc((argc + 4) * sizeof(char*));
+
+            // Slots: loader, --library-path, glibc_lib_dir, [--preload, glibc_preload], --argv0, eff_argv[0], rpath, [eff_argv[1]..eff_argv[argc-1]], NULL
+            int extra_args = 5 + (has_preload ? 2 : 0);
+            char** new_argv = malloc((argc + extra_args + 1) * sizeof(char*));
             if (new_argv) {
-                new_argv[0] = glibc_loader_path;
-                new_argv[1] = "--library-path";
-                new_argv[2] = glibc_lib_dir;
-                new_argv[3] = (char*)rpath;
-                for (int i = 1; i < argc; i++) new_argv[i + 3] = eff_argv[i];
-                new_argv[argc + 3] = NULL;
+                int idx = 0;
+                new_argv[idx++] = glibc_loader_path;
+                new_argv[idx++] = "--library-path";
+                new_argv[idx++] = glibc_lib_dir;
+                if (has_preload) {
+                    new_argv[idx++] = "--preload";
+                    new_argv[idx++] = glibc_preload;
+                }
+                new_argv[idx++] = "--argv0";
+                new_argv[idx++] = eff_argv[0] ? eff_argv[0] : (char*)rpath;
+                new_argv[idx++] = (char*)rpath;
+                for (int i = 1; i < argc; i++) new_argv[idx++] = eff_argv[i];
+                new_argv[idx] = NULL;
 
                 int ret = exec_func(glibc_loader_path, new_argv, safe_envp);
                 free(new_argv);
