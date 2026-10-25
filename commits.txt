@@ -245,7 +245,7 @@ DESCRIPTION:
      - Updated handle_shebang_exec to pass --library-path, --preload, and --argv0 to ld-linux-aarch64.so.1.
   5. Tested and verified on live Samsung Galaxy device: agy, tmux, git, and pkg execute with zero errors.
 
-COMMIT 25: [PENDING] - 2026-10-25 15:28:00 +0530
+COMMIT 25: [6ce1c4e] - 2026-10-25 15:28:00 +0530
 MESSAGE: "fix: Multi-user work profile path virtualization and direct glibc loader interposition for agy, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
