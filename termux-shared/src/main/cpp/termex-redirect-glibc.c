@@ -40,9 +40,33 @@ static void init_redirect_glibc(void) {
         snprintf(current_app_dir, sizeof(current_app_dir), "%s", env_dir);
     }
 
+    // Dynamic dladdr self-discovery fallback: resolve path to libtermex-redirect-glibc.so itself
     if (current_app_dir[0] == '\0') {
-        // Fallback default
-        strncpy(current_app_dir, "/data/data/com.termex", sizeof(current_app_dir) - 1);
+        Dl_info dli;
+        if (dladdr((void*)init_redirect_glibc, &dli) && dli.dli_fname) {
+            const char* usr = strstr(dli.dli_fname, "/files/usr");
+            if (usr) {
+                size_t len = usr - dli.dli_fname;
+                if (len < sizeof(current_app_dir)) {
+                    strncpy(current_app_dir, dli.dli_fname, len);
+                    current_app_dir[len] = '\0';
+                }
+            }
+        }
+    }
+
+    int user_id = getuid() / 100000;
+    if (user_id > 0) {
+        // Multi-user profile safety: secondary users must NEVER access /data/data (user 0)
+        if (current_app_dir[0] == '\0' ||
+            strncmp(current_app_dir, "/data/data/", 11) == 0 ||
+            strncmp(current_app_dir, "/data/user/0/", 13) == 0) {
+            snprintf(current_app_dir, sizeof(current_app_dir), "/data/user/%d/com.termex", user_id);
+        }
+    } else {
+        if (current_app_dir[0] == '\0') {
+            strncpy(current_app_dir, "/data/data/com.termex", sizeof(current_app_dir) - 1);
+        }
     }
 
     current_app_dir_len = strlen(current_app_dir);

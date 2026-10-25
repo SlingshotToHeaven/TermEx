@@ -245,6 +245,34 @@ DESCRIPTION:
      - Updated handle_shebang_exec to pass --library-path, --preload, and --argv0 to ld-linux-aarch64.so.1.
   5. Tested and verified on live Samsung Galaxy device: agy, tmux, git, and pkg execute with zero errors.
 
+COMMIT 25: [PENDING] - 2026-10-25 15:28:00 +0530
+MESSAGE: "fix: Multi-user work profile path virtualization and direct glibc loader interposition for agy, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Fix Antigravity CLI (agy) installation and execution failure in Android work profiles (User 10 / Island / Shelter / Knox):
+  1. Multi-User App Dir Discovery & Isolation:
+     - Updated init_redirect() in termex-redirect.c and init_redirect_glibc() in termex-redirect-glibc.c to check getuid() / 100000.
+     - For secondary users (userId > 0), strictly enforce resolution to /data/user/<userId>/com.termex and forbid fallback to User 0 (/data/data/ or /data/user/0/), preventing DAC EACCES permission denied errors.
+     - Implemented dynamic dladdr() self-discovery fallback in termex-redirect-glibc.c.
+  2. Multi-User /proc/self/exe Virtualization:
+     - Updated virtualize_returned_path() in termex-redirect.c to virtualize paths on secondary users as /data/user/<userId>/com.termux/... rather than canonical /data/data/com.termux/..., matching upstream Android multi-user architecture and preventing directory traversal into forbidden User 0 paths.
+  3. Universal Execv Argument Sanitization:
+     - Overhauled sanitize_exec_argv() in termex-redirect.c to perform comprehensive path prefix rewriting on all argument strings.
+     - Rewrites /data/data/com.termux, /data/user/0/com.termux, /data/user/<id>/com.termux, and (for secondary users) /data/data/com.termex and /data/user/0/com.termex directly to active current_app_dir (/data/user/<userId>/com.termex).
+     - Resolves issue where agy launcher passed /data/data/com.termex/files/usr/tmp/agy.va39 to ld-linux, which failed on User 10 with 'cannot open shared object file: Permission denied'.
+  4. Direct Glibc Dynamic Linker Interposition:
+     - Enhanced handle_shebang_exec() in termex-redirect.c to detect direct execution of the glibc dynamic linker (ld-linux-aarch64.so.1).
+     - Automatically runs ensure_glibc_environment(current_app_dir) and injects --preload <app_dir>/files/usr/glibc/lib/libtermex-redirect-glibc.so into argv when not already present, ensuring glibc internal lookups (nsswitch.conf, hosts) and socket binds are intercepted even when launched via custom Bionic wrappers.
+  5. Dynamic Asset Update in TermuxInstaller.java:
+     - Enhanced installGlibcRedirectLibraryIfNeeded() to detect asset size changes and update libtermex-redirect-glibc.so automatically.
+     - Updated ld.so.preload synchronization to verify file contents match current user's library path.
+  6. Tested and Verified on Live Device:
+     - Recompiled libtermex-redirect-glibc.so and rebuilt APK.
+     - Tested on live connected Samsung Galaxy device on both User 0 (personal) and User 10 (work profile).
+     - Verified: 'curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash' installs cleanly with '1.4.7 verified' and 'Installation Complete.'.
+     - Verified: 'agy --version' and 'agy --help' execute with exit code 0 on both profiles.
+
+
 
 
 

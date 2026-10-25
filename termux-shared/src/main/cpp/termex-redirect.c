@@ -83,6 +83,17 @@ static void init_redirect(void) {
             }
         }
     }
+
+    int user_id = getuid() / 100000;
+    if (user_id > 0) {
+        // Multi-user profile safety: secondary users must NEVER access /data/data (user 0)
+        if (current_app_dir[0] == '\0' ||
+            strncmp(current_app_dir, "/data/data/", 11) == 0 ||
+            strncmp(current_app_dir, "/data/user/0/", 13) == 0) {
+            snprintf(current_app_dir, sizeof(current_app_dir), "/data/user/%d/com.termex", user_id);
+        }
+    }
+
     current_app_dir_len = strlen(current_app_dir);
     if (current_app_dir_len > 0) {
         snprintf(default_libpath, sizeof(default_libpath), "%s/files/usr/lib", current_app_dir);
@@ -462,7 +473,13 @@ static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz) {
             memcpy(suffix, buf + current_app_dir_len, slen);
             suffix[slen] = '\0';
             char vpath[1024];
-            int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+            int user_id = getuid() / 100000;
+            int n;
+            if (user_id > 0) {
+                n = snprintf(vpath, sizeof(vpath), "/data/user/%d/com.termux%s", user_id, suffix);
+            } else {
+                n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+            }
             if (n > 0) {
                 size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz;
                 memcpy(buf, vpath, to_copy);
@@ -1350,6 +1367,9 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
         if (strstr(argv[i], "com.termux")) {
             needs_mod = 1;
         }
+        if (user_id > 0 && (strstr(argv[i], TARGET_PREFIX3) || strstr(argv[i], TARGET_PREFIX4))) {
+            needs_mod = 1;
+        }
     }
 
     if (!needs_mod) return (char**)argv;
@@ -1365,25 +1385,78 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
         if (slash && *(slash + 1)) real_pkg = slash + 1;
     }
 
+    char u_termux_pfx[64] = {0};
+    if (user_id > 0) {
+        snprintf(u_termux_pfx, sizeof(u_termux_pfx), "/data/user/%d/com.termux", user_id);
+    }
+    size_t u_termux_len = strlen(u_termux_pfx);
+
     for (int i = 0; i < argc; i++) {
         if (is_am && user_id > 0 && strcmp(argv[i], "0") == 0 && i > 0 && strcmp(argv[i-1], "--user") == 0) {
             new_argv[i] = user_id_str;
-        } else if (strstr(argv[i], "com.termux")) {
-            char buf[1024];
+        } else if (strstr(argv[i], "com.termux") ||
+                   (user_id > 0 && (strstr(argv[i], TARGET_PREFIX3) || strstr(argv[i], TARGET_PREFIX4)))) {
+            char buf[2048];
             const char* src = argv[i];
             char* dst = buf;
             size_t remain = sizeof(buf) - 1;
             while (*src && remain > 0) {
-                // If this is a component reference "com.termux/com.termux."
-                if (strncmp(src, "com.termux/com.termux.", 22) == 0) {
+                // 1. Filesystem path: /data/data/com.termux
+                if (strncmp(src, TARGET_PREFIX1, TARGET_LEN1) == 0) {
+                    size_t plen = current_app_dir_len;
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, current_app_dir, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += TARGET_LEN1;
+                }
+                // 2. Filesystem path: /data/user/0/com.termux
+                else if (strncmp(src, TARGET_PREFIX2, TARGET_LEN2) == 0) {
+                    size_t plen = current_app_dir_len;
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, current_app_dir, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += TARGET_LEN2;
+                }
+                // 3. Filesystem path: /data/user/<id>/com.termux
+                else if (u_termux_len > 0 && strncmp(src, u_termux_pfx, u_termux_len) == 0) {
+                    size_t plen = current_app_dir_len;
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, current_app_dir, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += u_termux_len;
+                }
+                // 4. Filesystem path on secondary users: /data/data/com.termex -> /data/user/<id>/com.termex
+                else if (user_id > 0 && strncmp(src, TARGET_PREFIX3, TARGET_LEN3) == 0) {
+                    size_t plen = current_app_dir_len;
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, current_app_dir, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += TARGET_LEN3;
+                }
+                // 5. Filesystem path on secondary users: /data/user/0/com.termex -> /data/user/<id>/com.termex
+                else if (user_id > 0 && strncmp(src, TARGET_PREFIX4, TARGET_LEN4) == 0) {
+                    size_t plen = current_app_dir_len;
+                    if (plen > remain) plen = remain;
+                    memcpy(dst, current_app_dir, plen);
+                    dst += plen;
+                    remain -= plen;
+                    src += TARGET_LEN4;
+                }
+                // 6. Component reference "com.termux/com.termux."
+                else if (strncmp(src, "com.termux/com.termux.", 22) == 0) {
                     size_t plen = strlen(real_pkg);
                     if (plen > remain) plen = remain;
                     memcpy(dst, real_pkg, plen);
                     dst += plen;
                     remain -= plen;
-                    src += 10; // skips "com.termux", leaving "/com.termux." intact!
-                } else if (strncmp(src, "com.termux", 10) == 0 &&
-                           // Only rewrite package prefix if NOT followed by ".app." or ".shared." (which are Java package names)
+                    src += 10; // skips "com.termux", leaving "/com.termux." intact
+                }
+                // 7. General com.termux package replacement (not Java package)
+                else if (strncmp(src, "com.termux", 10) == 0 &&
                            strncmp(src, "com.termux.app", 14) != 0 &&
                            strncmp(src, "com.termux.shared", 17) != 0 &&
                            strncmp(src, "com.termux.terminal", 19) != 0 &&
@@ -1415,6 +1488,11 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
 static int handle_shebang_exec(const char* rpath, char* const argv[], char* const envp[], orig_open_t o_open, int (*exec_func)(const char*, char* const[], char* const[])) {
     char elf_interp[512] = {0};
     int is_glibc = check_is_glibc_binary(rpath, elf_interp, sizeof(elf_interp));
+    int is_loader = (strstr(rpath, "ld-linux") != NULL);
+    if (is_loader) {
+        is_glibc = 1;
+        ensure_glibc_environment(current_app_dir);
+    }
     int is_system = is_system_binary(rpath);
     char** safe_envp = ensure_env(envp, is_glibc, is_system);
     int mod_argv = 0;
@@ -1526,6 +1604,39 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
             }
         }
     }
+    if (is_loader) {
+        char glibc_preload[512] = {0};
+        if (current_app_dir[0]) {
+            snprintf(glibc_preload, sizeof(glibc_preload), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", current_app_dir);
+        }
+        int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
+        int has_preload_arg = 0;
+        int argc = 0;
+        while (eff_argv && eff_argv[argc]) {
+            if (strcmp(eff_argv[argc], "--preload") == 0) has_preload_arg = 1;
+            argc++;
+        }
+        if (has_preload && !has_preload_arg && argc > 0) {
+            char** new_argv = malloc((argc + 3) * sizeof(char*));
+            if (new_argv) {
+                new_argv[0] = eff_argv[0];
+                new_argv[1] = "--preload";
+                new_argv[2] = glibc_preload;
+                for (int i = 1; i < argc; i++) new_argv[i + 2] = eff_argv[i];
+                new_argv[argc + 2] = NULL;
+                int ret = exec_func(rpath, new_argv, safe_envp);
+                free(new_argv);
+                if (mod_argv) {
+                    for (int i = 0; i < argc; i++) {
+                        if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                    }
+                    free(eff_argv);
+                }
+                return ret;
+            }
+        }
+    }
+
     int ret = exec_func(rpath, eff_argv, safe_envp);
     if (mod_argv) {
         int argc = 0;

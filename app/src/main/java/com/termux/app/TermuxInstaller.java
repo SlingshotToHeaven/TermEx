@@ -455,7 +455,15 @@ final class TermuxInstaller {
             File targetDir = new File(glibcDir, "lib");
             ensureDirectoryExists(targetDir);
             File targetLib = new File(targetDir, "libtermex-redirect-glibc.so");
-            if (!targetLib.exists()) {
+            boolean needInstall = !targetLib.exists();
+            if (!needInstall) {
+                try (android.content.res.AssetFileDescriptor afd = context.getAssets().openFd("libtermex-redirect-glibc.so")) {
+                    if (afd != null && afd.getLength() > 0 && afd.getLength() != targetLib.length()) {
+                        needInstall = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (needInstall) {
                 try (InputStream is = context.getAssets().open("libtermex-redirect-glibc.so");
                      FileOutputStream fos = new FileOutputStream(targetLib)) {
                     byte[] buf = new byte[8192];
@@ -547,13 +555,27 @@ final class TermuxInstaller {
             // 3. ld.so.preload
             File preloadFile = new File(etcDir, "ld.so.preload");
             File glibcLib = new File(glibcDir, "lib/libtermex-redirect-glibc.so");
-            if (glibcLib.exists() && !preloadFile.exists()) {
-                try (FileOutputStream fos = new FileOutputStream(preloadFile)) {
-                    fos.write((glibcLib.getAbsolutePath() + "\n").getBytes(StandardCharsets.UTF_8));
+            if (glibcLib.exists()) {
+                String expected = glibcLib.getAbsolutePath() + "\n";
+                boolean needWrite = !preloadFile.exists();
+                if (!needWrite) {
+                    try {
+                        String current = new String(java.nio.file.Files.readAllBytes(preloadFile.toPath()), StandardCharsets.UTF_8);
+                        if (!current.trim().equals(glibcLib.getAbsolutePath())) {
+                            needWrite = true;
+                        }
+                    } catch (Exception e) {
+                        needWrite = true;
+                    }
                 }
-                //noinspection OctalInteger
-                Os.chmod(preloadFile.getAbsolutePath(), 0644);
-                Logger.logInfo(LOG_TAG, "Created glibc ld.so.preload");
+                if (needWrite) {
+                    try (FileOutputStream fos = new FileOutputStream(preloadFile)) {
+                        fos.write(expected.getBytes(StandardCharsets.UTF_8));
+                    }
+                    //noinspection OctalInteger
+                    Os.chmod(preloadFile.getAbsolutePath(), 0644);
+                    Logger.logInfo(LOG_TAG, "Created/Updated glibc ld.so.preload");
+                }
             }
 
             // 4. In-place binary patch of libc.so.6 and ld-linux-aarch64.so.1
