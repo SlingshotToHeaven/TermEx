@@ -271,7 +271,7 @@ DESCRIPTION:
      - Tested on live connected Samsung Galaxy device on both User 0 (personal) and User 10 (work profile).
      - Verified: 'curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash' installs cleanly with '1.4.7 verified' and 'Installation Complete.'.
      - Verified: 'agy --version' and 'agy --help' execute with exit code 0 on both profiles.
-COMMIT 26: [PENDING] - 2026-11-03 22:35:00 +0530
+COMMIT 26: [d1a4209] - 2026-11-03 22:35:00 +0530
 MESSAGE: "fix: Offline localhost DNS resolution and resolve ETXTBSY on glibc execution, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
