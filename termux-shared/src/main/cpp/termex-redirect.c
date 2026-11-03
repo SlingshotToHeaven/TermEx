@@ -1564,6 +1564,43 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
         }
     }
 
+    // Case 1b: Direct execution of glibc dynamic loader (e.g. agy launcher or glibc runner script)
+    if (is_loader) {
+        char glibc_preload[512] = {0};
+        if (current_app_dir[0]) {
+            snprintf(glibc_preload, sizeof(glibc_preload), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", current_app_dir);
+        }
+        int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
+        int already_has_preload = 0;
+        int argc = 0;
+        while (eff_argv && eff_argv[argc]) {
+            if (strcmp(eff_argv[argc], "--preload") == 0) already_has_preload = 1;
+            argc++;
+        }
+
+        if (has_preload && !already_has_preload && argc >= 1) {
+            // Insert --preload <glibc_preload> after eff_argv[0]
+            char** new_argv = malloc((argc + 2 + 1) * sizeof(char*));
+            if (new_argv) {
+                new_argv[0] = eff_argv[0];
+                new_argv[1] = "--preload";
+                new_argv[2] = glibc_preload;
+                for (int i = 1; i < argc; i++) new_argv[i + 2] = eff_argv[i];
+                new_argv[argc + 2] = NULL;
+
+                int ret = exec_func(rpath, new_argv, safe_envp);
+                free(new_argv);
+                if (mod_argv) {
+                    for (int i = 0; i < argc; i++) {
+                        if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                    }
+                    free(eff_argv);
+                }
+                return ret;
+            }
+        }
+    }
+
     int fd = o_open ? o_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
     if (fd >= 0) {
         char header[256];

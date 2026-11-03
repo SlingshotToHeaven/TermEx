@@ -271,9 +271,28 @@ DESCRIPTION:
      - Tested on live connected Samsung Galaxy device on both User 0 (personal) and User 10 (work profile).
      - Verified: 'curl -fsSL https://raw.githubusercontent.com/wallentx/antigravity-cli-termux/dev/install.sh | bash' installs cleanly with '1.4.7 verified' and 'Installation Complete.'.
      - Verified: 'agy --version' and 'agy --help' execute with exit code 0 on both profiles.
-
-
-
+COMMIT 26: [PENDING] - 2026-11-03 22:35:00 +0530
+MESSAGE: "fix: Offline localhost DNS resolution and resolve ETXTBSY on glibc execution, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Fix 'CLI failed to start - listen tcp: lookup localhost: Temporary failure in name resolution' when offline (without hotspot or Wi-Fi):
+  1. Synthetic Localhost & Hostname Interposition in libtermex-redirect-glibc.so:
+     - Intercept getaddrinfo(), freeaddrinfo(), gethostbyname(), gethostbyname2(), gethostbyname_r(), gethostbyname2_r().
+     - For "localhost", "127.0.0.1", "::1", "ip6-localhost", and AI_PASSIVE lookups, synchronously return synthetic loopback addrinfo / hostent records with 0ms latency.
+     - Never queries external DNS or network resolvers for local addresses, allowing agy gRPC language server and local web dev servers to start completely offline.
+     - Intercept fopen(), fopen64(), freopen(), freopen64() to redirect hardcoded User 0 glibc paths to active user's prefix.
+  2. Direct Loader Preload Injection in termex-redirect.c:
+     - Added Case 1b to handle_shebang_exec(): when glibc loader (ld-linux-aarch64.so.1) is executed directly by launcher binaries (e.g. agy Bionic wrapper), automatically injects '--preload <app_dir>/files/usr/glibc/lib/libtermex-redirect-glibc.so'.
+     - Eliminates dependency on fallback /etc/ld.so.preload which is blocked by DAC on secondary profiles (User 10).
+- Fix '[agy-termux] execv failed: Text file busy' (ETXTBSY):
+  1. Eliminate MappedByteBuffer Write Locks:
+     - In TermuxInstaller.patchBinaryTermuxToTermex(), replaced memory-mapped FileChannel.map(MapMode.READ_WRITE) with an initial read-only buffer inspection.
+     - If the file is already patched (does not contain 'com.termux'), skips writing entirely without opening a write descriptor.
+     - If modification is needed, writes patched bytes through FileOutputStream and flushes/closes immediately, preventing persistent kernel write-locks (i_writecount > 0).
+  2. Tested and Verified on Live Device:
+     - Verified: 'agy -p "hi"' starts language server, binds gRPC on localhost, and connects offline without hotspot/Wi-Fi on both User 0 and User 10.
+     - Verified: 'getent hosts localhost', 'getent ahostsv4 localhost', 'getent ahostsv6 localhost' succeed with code 0 on User 10.
+     - Verified: Zero ETXTBSY occurrences across repeated invocations.
 
 
 

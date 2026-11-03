@@ -26,12 +26,11 @@ import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -482,40 +481,57 @@ final class TermuxInstaller {
     }
 
     public static void patchBinaryTermuxToTermex(File file) {
-        if (file == null || !file.exists() || !file.isFile() || !file.canRead() || !file.canWrite()) return;
-        try (RandomAccessFile raf = new RandomAccessFile(file, "rw");
-             FileChannel channel = raf.getChannel()) {
-            long size = channel.size();
-            if (size < 100 || size > 50 * 1024 * 1024) return;
-            MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, size);
-            byte[] from = "com.termux".getBytes(StandardCharsets.UTF_8);
-            byte[] to = TermuxConstants.TERMUX_PACKAGE_NAME.getBytes(StandardCharsets.UTF_8);
-            if (from.length != to.length) return;
+        if (file == null || !file.exists() || !file.isFile() || !file.canRead()) return;
+        long size = file.length();
+        if (size < 100 || size > 50 * 1024 * 1024) return;
 
-            int limit = (int) size - from.length;
-            boolean modified = false;
-            for (int i = 0; i <= limit; i++) {
-                boolean match = true;
-                for (int j = 0; j < from.length; j++) {
-                    if (buffer.get(i + j) != from[j]) {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match) {
-                    for (int j = 0; j < to.length; j++) {
-                        buffer.put(i + j, to[j]);
-                    }
-                    modified = true;
-                    i += from.length - 1;
-                }
+        byte[] from = "com.termux".getBytes(StandardCharsets.UTF_8);
+        byte[] to = TermuxConstants.TERMUX_PACKAGE_NAME.getBytes(StandardCharsets.UTF_8);
+        if (from.length != to.length) return;
+
+        // 1. Read-only fast scan into byte buffer to avoid write locks and ETXTBSY if already patched
+        byte[] data = new byte[(int) size];
+        try (FileInputStream fis = new FileInputStream(file)) {
+            int read = 0;
+            while (read < data.length) {
+                int r = fis.read(data, read, data.length - read);
+                if (r <= 0) break;
+                read += r;
             }
-            if (modified) {
-                buffer.force();
-                Logger.logInfo(LOG_TAG, "Patched " + file.getName() + " com.termux -> " + TermuxConstants.TERMUX_PACKAGE_NAME);
-            }
+            if (read != data.length) return;
         } catch (Exception e) {
-            Logger.logError(LOG_TAG, "Failed patching " + file.getName() + ": " + e.getMessage());
+            return;
+        }
+
+        int limit = data.length - from.length;
+        boolean modified = false;
+        for (int i = 0; i <= limit; i++) {
+            boolean match = true;
+            for (int j = 0; j < from.length; j++) {
+                if (data[i + j] != from[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                for (int j = 0; j < to.length; j++) {
+                    data[i + j] = to[j];
+                }
+                modified = true;
+                i += from.length - 1;
+            }
+        }
+
+        // 2. Only open for writing if modification is strictly needed, and close immediately
+        if (modified) {
+            if (!file.canWrite()) return;
+            try (FileOutputStream fos = new FileOutputStream(file, false)) {
+                fos.write(data);
+                fos.flush();
+                Logger.logInfo(LOG_TAG, "Patched " + file.getName() + " com.termux -> " + TermuxConstants.TERMUX_PACKAGE_NAME);
+            } catch (Exception e) {
+                Logger.logError(LOG_TAG, "Failed writing patched " + file.getName() + ": " + e.getMessage());
+            }
         }
     }
 
