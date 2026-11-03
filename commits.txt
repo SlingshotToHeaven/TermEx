@@ -294,5 +294,24 @@ DESCRIPTION:
      - Verified: 'getent hosts localhost', 'getent ahostsv4 localhost', 'getent ahostsv6 localhost' succeed with code 0 on User 10.
      - Verified: Zero ETXTBSY occurrences across repeated invocations.
 
+COMMIT 27: [PENDING] - 2026-11-03 22:45:00 +0530
+MESSAGE: "fix: Patch glibc resolv.conf path for secondary user profiles to enable internet DNS, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Fix 'failed to construct executor: plan model not specified; you must specify a valid model' in agy on secondary user profiles (User 10):
+  1. Root Cause Analysis:
+     - Glibc internal resolver (__resolv_conf_load in libc.so.6) opens the hardcoded path /data/data/com.termex/files/usr/glibc/etc/resolv.conf directly via inline syscall (bypassing PLT).
+     - On secondary user profiles (e.g. User 10), /data/data/com.termex is inaccessible under Android DAC (Permission denied).
+     - Glibc failed to load nameservers, falling back to 127.0.0.1:53 (which does not run a DNS server on Android).
+     - Consequently, all external DNS lookups (e.g., daily-cloudcode-pa.googleapis.com) failed with 'dial tcp: lookup ...: Temporary failure in name resolution'.
+     - agy could not fetch the model configuration from Google Cloud Code Assist APIs, producing the 'plan model not specified' error on user prompts.
+  2. Dynamic Binary Path Patcher for Secondary Profiles:
+     - Implemented patchGlibcResolvConfIfNeeded() in TermuxInstaller.java:
+     - Detects secondary user profiles (prefix != /data/data/ and != /data/user/0/).
+     - In-place rewrites the 53-byte resolv.conf path in $PREFIX/glibc/lib/libc.so.6 from /data/data/com.termex/files/usr/glibc/etc/resolv.conf to the active user's /etc/resolv.conf padded with extra canonical slashes (e.g. /data/user/10/com.termex/files/usr////etc/resolv.conf), preserving exact byte offsets.
+  3. Live Device Verification:
+     - Verified: 'getent ahostsv4 google.com' and 'getent ahostsv4 daily-cloudcode-pa.googleapis.com' resolve immediately with exit code 0 on User 10.
+     - Verified: agy connects to Google APIs over TLS, authenticates, and retrieves model/quota status cleanly without any DNS or executor construction errors.
+
 
 

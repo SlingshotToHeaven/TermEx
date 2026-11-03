@@ -599,9 +599,74 @@ final class TermuxInstaller {
             File ldFile = new File(glibcDir, "lib/ld-linux-aarch64.so.1");
             patchBinaryTermuxToTermex(libcFile);
             patchBinaryTermuxToTermex(ldFile);
+            patchGlibcResolvConfIfNeeded(libcFile);
 
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Failed to setup glibc environment: " + e.getMessage());
+        }
+    }
+
+    public static void patchGlibcResolvConfIfNeeded(File libcFile) {
+        if (libcFile == null || !libcFile.exists() || !libcFile.isFile() || !libcFile.canRead()) return;
+        String prefix = TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+        if (prefix.startsWith("/data/data/") || prefix.startsWith("/data/user/0/")) return;
+
+        byte[] oldBytes = "/data/data/com.termex/files/usr/glibc/etc/resolv.conf".getBytes(StandardCharsets.UTF_8);
+        int targetLen = oldBytes.length;
+
+        String base = prefix + "/etc/resolv.conf";
+        if (base.length() > targetLen) return;
+        int diff = targetLen - base.length();
+        StringBuilder sb = new StringBuilder();
+        sb.append(prefix);
+        for (int i = 0; i <= diff; i++) {
+            sb.append("/");
+        }
+        sb.append("etc/resolv.conf");
+        byte[] newBytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+        if (newBytes.length != targetLen) return;
+
+        try {
+            byte[] data = new byte[(int) libcFile.length()];
+            try (FileInputStream fis = new FileInputStream(libcFile)) {
+                int read = 0;
+                while (read < data.length) {
+                    int r = fis.read(data, read, data.length - read);
+                    if (r <= 0) break;
+                    read += r;
+                }
+                if (read != data.length) return;
+            }
+
+            int limit = data.length - targetLen;
+            boolean modified = false;
+            for (int i = 0; i <= limit; i++) {
+                boolean match = true;
+                for (int j = 0; j < targetLen; j++) {
+                    if (data[i + j] != oldBytes[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    for (int j = 0; j < targetLen; j++) {
+                        data[i + j] = newBytes[j];
+                    }
+                    modified = true;
+                    i += targetLen - 1;
+                }
+            }
+
+            if (modified) {
+                if (!libcFile.canWrite()) return;
+                try (FileOutputStream fos = new FileOutputStream(libcFile, false)) {
+                    fos.write(data);
+                    fos.flush();
+                    Logger.logInfo(LOG_TAG, "Patched resolv.conf in " + libcFile.getName() + " for secondary user");
+                }
+            }
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed patching resolv.conf: " + e.getMessage());
         }
     }
 
