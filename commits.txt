@@ -294,7 +294,7 @@ DESCRIPTION:
      - Verified: 'getent hosts localhost', 'getent ahostsv4 localhost', 'getent ahostsv6 localhost' succeed with code 0 on User 10.
      - Verified: Zero ETXTBSY occurrences across repeated invocations.
 
-COMMIT 27: [PENDING] - 2026-11-03 22:45:00 +0530
+COMMIT 27: [5b5fce0] - 2026-11-03 22:45:00 +0530
 MESSAGE: "fix: Patch glibc resolv.conf path for secondary user profiles to enable internet DNS, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
