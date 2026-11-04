@@ -341,6 +341,23 @@ DESCRIPTION:
      - Verified: 'java -XshowSettings:properties -version' reports user.home, user.dir, java.home, and java.io.tmpdir as 100% canonical /data/data/com.termux/...
      - Verified: './gradlew --version' and './gradlew help' inside project 'hentoid' run cleanly without daemon lockfile or analytics permission errors (BUILD SUCCESSFUL).
 
+COMMIT 29: [PENDING] - 2026-11-04 10:45:00 +0530
+MESSAGE: "fix: Virtualize PWD environment variable and shell session working directory to render ~ in prompt, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Fix shell prompt rendering '.../files/home' instead of '~' on terminal launch:
+  1. Root Cause:
+     - Android OS / shell launcher passed physical working directory (/data/user/10/com.termex/files/home) into the shell process environment (PWD).
+     - Bash's prompt formatter (\w) compares $PWD with $HOME (/data/data/com.termux/files/home).
+     - Because the string prefix did not match, PROMPT_DIRTRIM=2 in bash.bashrc trimmed it to '.../files/home'.
+  2. Implementation:
+     - TermuxShellEnvironment.java: explicitly sets PWD=/data/data/com.termux/files/home in getEnvironment().
+     - termex-redirect.c & termex-redirect-glibc.c: in init_redirect, automatically virtualize getenv("PWD") and in-place rewrite environ[i] for PWD=.
+     - ensure_env & ensure_env_glibc: virtualize PWD= across execve and posix_spawn child processes.
+  3. Live Verification:
+     - Verified on User 10: starting bash with physical PWD produces PWD=/data/data/com.termux/files/home and prompt renders '~ $' immediately.
+
+
 
 
 

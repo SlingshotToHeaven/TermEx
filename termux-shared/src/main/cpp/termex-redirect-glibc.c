@@ -36,6 +36,8 @@ static size_t current_app_dir_len = 0;
 static char parent_app_dir[512] = {0};
 static size_t parent_app_dir_len = 0;
 
+static ssize_t virtualize_returned_path_glibc(char* buf, ssize_t len, size_t bufsiz);
+
 __attribute__((constructor))
 static void init_redirect_glibc(void) {
     const char* env_dir = getenv("TERMEX_REAL_APP_DIR");
@@ -97,6 +99,14 @@ static void init_redirect_glibc(void) {
                 parent_app_dir[plen] = '\0';
                 parent_app_dir_len = plen;
             }
+        }
+        const char* env_pwd = getenv("PWD");
+        if (env_pwd) {
+            char vpwd[1024];
+            strncpy(vpwd, env_pwd, sizeof(vpwd) - 1);
+            vpwd[sizeof(vpwd) - 1] = '\0';
+            virtualize_returned_path_glibc(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
+            setenv("PWD", vpwd, 1);
         }
     }
 }
@@ -725,6 +735,18 @@ static char** ensure_env_glibc(char* const envp[], int is_glibc_child) {
             if (i == preload_idx || i == libpath_idx) continue;
         }
         if (i == prefix_idx || i == home_idx || i == tmpdir_idx || i == appdir_idx) continue;
+        if (strncmp(envp[i], "PWD=", 4) == 0) {
+            char vpwd[1024];
+            strncpy(vpwd, envp[i] + 4, sizeof(vpwd) - 1);
+            vpwd[sizeof(vpwd) - 1] = '\0';
+            virtualize_returned_path_glibc(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
+            char* line = malloc(1050);
+            if (line) {
+                snprintf(line, 1050, "PWD=%s", vpwd);
+                new_envp[new_count++] = line;
+            }
+            continue;
+        }
         new_envp[new_count++] = envp[i];
     }
 

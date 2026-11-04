@@ -83,6 +83,7 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         // Guest binaries see 100% canonical Termux environment
         environment.put(ENV_HOME, "/data/data/com.termux/files/home");
         environment.put(ENV_PREFIX, "/data/data/com.termux/files/usr");
+        environment.put("PWD", "/data/data/com.termux/files/home");
 
         // If failsafe is not enabled, then we keep default PATH and TMPDIR so that system binaries can be used
         if (!isFailSafe) {

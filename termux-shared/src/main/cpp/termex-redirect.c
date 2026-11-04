@@ -39,6 +39,8 @@ static size_t parent_app_dir_len = 0;
 
 static char default_libpath[512] = {0};
 
+static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz);
+
 __attribute__((constructor))
 static void init_redirect(void) {
     const char* env_dir = getenv("TERMEX_REAL_APP_DIR");
@@ -118,6 +120,27 @@ static void init_redirect(void) {
                 strncpy(parent_app_dir, current_app_dir, plen);
                 parent_app_dir[plen] = '\0';
                 parent_app_dir_len = plen;
+            }
+        }
+        const char* env_pwd = getenv("PWD");
+        if (env_pwd) {
+            char vpwd[1024];
+            strncpy(vpwd, env_pwd, sizeof(vpwd) - 1);
+            vpwd[sizeof(vpwd) - 1] = '\0';
+            virtualize_returned_path(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
+            setenv("PWD", vpwd, 1);
+        }
+        if (environ) {
+            for (int i = 0; environ[i]; i++) {
+                if (strncmp(environ[i], "PWD=", 4) == 0 && strstr(environ[i], "com.termex")) {
+                    char vpwd[1024];
+                    strncpy(vpwd, environ[i] + 4, sizeof(vpwd) - 1);
+                    vpwd[sizeof(vpwd) - 1] = '\0';
+                    virtualize_returned_path(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
+                    char line[1050];
+                    snprintf(line, sizeof(line), "PWD=%s", vpwd);
+                    environ[i] = strdup(line);
+                }
             }
         }
     }
@@ -1409,6 +1432,15 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
             new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
         } else if (strncmp(envp[i], "TMPDIR=", 7) == 0) {
             new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
+        } else if (strncmp(envp[i], "PWD=", 4) == 0) {
+            char vpwd[1024];
+            const char* val = envp[i] + 4;
+            strncpy(vpwd, val, sizeof(vpwd) - 1);
+            vpwd[sizeof(vpwd) - 1] = '\0';
+            virtualize_returned_path(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
+            char line[1050];
+            snprintf(line, sizeof(line), "PWD=%s", vpwd);
+            new_env[write_pos++] = strdup(line);
         } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
                    (strstr(envp[i], cur_app_dir) || strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
             char new_path[4096];
