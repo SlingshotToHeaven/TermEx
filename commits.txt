@@ -341,7 +341,7 @@ DESCRIPTION:
      - Verified: 'java -XshowSettings:properties -version' reports user.home, user.dir, java.home, and java.io.tmpdir as 100% canonical /data/data/com.termux/...
      - Verified: './gradlew --version' and './gradlew help' inside project 'hentoid' run cleanly without daemon lockfile or analytics permission errors (BUILD SUCCESSFUL).
 
-COMMIT 29: [PENDING] - 2026-11-04 10:45:00 +0530
+COMMIT 29: [5f0fc3c] - 2026-11-04 10:45:00 +0530
 MESSAGE: "fix: Virtualize PWD environment variable and shell session working directory to render ~ in prompt, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
