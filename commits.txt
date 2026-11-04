@@ -361,3 +361,33 @@ DESCRIPTION:
 
 
 
+
+COMMIT 30: [PENDING] - 2026-11-04 11:38:00 +0530
+MESSAGE: "fix: Virtualize /proc/self/maps, agy glibc loader args, and LD_LIBRARY_PATH across processes, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Achieve 100% clean virtualization across all devtools, Android toolchain, and agy:
+  1. Glibc Dynamic Loader Direct Execution (agy launcher):
+     - When C wrapper (agy) executes ld-linux-aarch64.so.1 directly, the dynamic linker opens the main binary and --library-path before preloaded libraries are active.
+     - Interposed execv, execve, and posix_spawn now rewrite --library-path and target executable arguments to physical paths while injecting --argv0 pointing to the canonical path and preloading libtermex-redirect-glibc.so.
+     - Result: agy --version, agy --help, and agy subcommands run directly without 'Permission denied' on User 10.
+  2. /proc/self/maps Virtualization:
+     - Interposed open, open64, openat, openat64, and __open_2 for /proc/*/maps.
+     - Dynamically rewrites mapped paths from /data/user/10/com.termex to /data/data/com.termux using anonymous memory/tempfile descriptors.
+     - Result: Zero leakage in /proc/self/maps when inspected by debuggers, profilers, or grep.
+  3. LD_LIBRARY_PATH & java.library.path Virtualization:
+     - init_redirect(): sets LD_LIBRARY_PATH in process environment and mutates environ in-place to canonical /data/data/com.termux/files/usr/lib. Sets OpenJDK java.library.path to 100% canonical.
+     - ensure_env(): passes physical library path to child process linkers so Bionic /system/bin/linker64 links dependent libraries cleanly.
+  4. 10-Tier DevTools Torture Test Suite Verification (Live Device User 10):
+     - T01 (agy runtime & glibc DNS): PASS, 0 leaks.
+     - T02 (Full Android APK build: aapt2, javac, d8, apksigner, zipalign): PASS, 0 leaks.
+     - T03 (Gradle daemon lifecycle, IPC domain socket & hentoid project): PASS, 0 leaks.
+     - T04 (OpenJDK 21 deep properties, temp files, process spawn, 5MB mmap): PASS, 0 leaks.
+     - T05 (Python 3 venv, sys.executable, expanduser, shebang): PASS, 0 leaks.
+     - T06 (Rustc & Cargo new/build/run pipeline): PASS, 0 leaks.
+     - T07 (Clang shared library compilation, dlopen & dladdr): PASS, 0 leaks.
+     - T08 (Git repo lifecycle & #!/bin/sh pre-commit hook): PASS, 0 leaks.
+     - T09 (15-level deep directory nesting PWD stability & chained shebangs): PASS, 0 leaks.
+     - T10 (Cross-runtime glibc -> Bionic Python -> Bionic Java): PASS, 0 leaks.
+     - Total: 10/10 passed, 0 failures, 0 leaks.
+

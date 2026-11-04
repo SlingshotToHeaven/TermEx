@@ -130,6 +130,14 @@ static void init_redirect(void) {
             virtualize_returned_path(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
             setenv("PWD", vpwd, 1);
         }
+        const char* env_libpath = getenv("LD_LIBRARY_PATH");
+        if (env_libpath && strstr(env_libpath, "com.termex")) {
+            char vlibpath[1024];
+            strncpy(vlibpath, env_libpath, sizeof(vlibpath) - 1);
+            vlibpath[sizeof(vlibpath) - 1] = '\0';
+            virtualize_returned_path(vlibpath, (ssize_t)strlen(vlibpath), sizeof(vlibpath));
+            setenv("LD_LIBRARY_PATH", vlibpath, 1);
+        }
         if (environ) {
             for (int i = 0; environ[i]; i++) {
                 if (strncmp(environ[i], "PWD=", 4) == 0 && strstr(environ[i], "com.termex")) {
@@ -139,6 +147,15 @@ static void init_redirect(void) {
                     virtualize_returned_path(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
                     char line[1050];
                     snprintf(line, sizeof(line), "PWD=%s", vpwd);
+                    environ[i] = strdup(line);
+                }
+                if (strncmp(environ[i], "LD_LIBRARY_PATH=", 16) == 0 && strstr(environ[i], "com.termex")) {
+                    char vlib[1024];
+                    strncpy(vlib, environ[i] + 16, sizeof(vlib) - 1);
+                    vlib[sizeof(vlib) - 1] = '\0';
+                    virtualize_returned_path(vlib, (ssize_t)strlen(vlib), sizeof(vlib));
+                    char line[1050];
+                    snprintf(line, sizeof(line), "LD_LIBRARY_PATH=%s", vlib);
                     environ[i] = strdup(line);
                 }
             }
@@ -276,6 +293,55 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
     return path;
 }
 
+typedef int (*orig_open_t)(const char*, int, ...);
+
+static int is_proc_maps_path(const char* path) {
+    if (!path) return 0;
+    if (strncmp(path, "/proc/", 6) != 0) return 0;
+    return (strstr(path, "/maps") != NULL);
+}
+
+static int open_virtualized_proc_maps(const char* rpath) {
+    orig_open_t o_real_open = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    int real_fd = o_real_open ? o_real_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
+    if (real_fd < 0) return real_fd;
+
+    FILE* tf = tmpfile();
+    if (!tf) {
+        return real_fd;
+    }
+
+    char line[2048];
+    FILE* rf = fdopen(real_fd, "r");
+    if (!rf) {
+        fclose(tf);
+        close(real_fd);
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), rf)) {
+        if (current_app_dir[0] && strstr(line, current_app_dir)) {
+            char replaced[2048];
+            char* p = strstr(line, current_app_dir);
+            size_t prefix_len = p - line;
+            size_t needle_len = current_app_dir_len;
+            snprintf(replaced, sizeof(replaced), "%.*s/data/data/com.termux%s",
+                     (int)prefix_len, line, p + needle_len);
+            fputs(replaced, tf);
+        } else {
+            fputs(line, tf);
+        }
+    }
+    fclose(rf);
+
+    fflush(tf);
+    fseek(tf, 0, SEEK_SET);
+    int raw_fd = fileno(tf);
+    int res_fd = dup(raw_fd);
+    fclose(tf);
+    return res_fd;
+}
+
 // open
 typedef int (*orig_open_t)(const char*, int, ...);
 int open(const char* pathname, int flags, ...) {
@@ -283,6 +349,9 @@ int open(const char* pathname, int flags, ...) {
     if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open");
     char buf[1024];
     const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    if (is_proc_maps_path(rpath) && (flags & (O_WRONLY | O_RDWR)) == 0) {
+        return open_virtualized_proc_maps(rpath);
+    }
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0) {
         va_list args;
@@ -301,6 +370,9 @@ int open64(const char* pathname, int flags, ...) {
     if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open");
     char buf[1024];
     const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    if (is_proc_maps_path(rpath) && (flags & (O_WRONLY | O_RDWR)) == 0) {
+        return open_virtualized_proc_maps(rpath);
+    }
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0) {
         va_list args;
@@ -319,6 +391,9 @@ int openat(int dirfd, const char* pathname, int flags, ...) {
     if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat");
     char buf[1024];
     const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    if (is_proc_maps_path(rpath) && (flags & (O_WRONLY | O_RDWR)) == 0) {
+        return open_virtualized_proc_maps(rpath);
+    }
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0) {
         va_list args;
@@ -337,6 +412,9 @@ int openat64(int dirfd, const char* pathname, int flags, ...) {
     if (!orig) orig = (orig_openat_t)dlsym(RTLD_NEXT, "openat");
     char buf[1024];
     const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    if (is_proc_maps_path(rpath) && (flags & (O_WRONLY | O_RDWR)) == 0) {
+        return open_virtualized_proc_maps(rpath);
+    }
     mode_t mode = 0;
     if ((flags & O_CREAT) != 0) {
         va_list args;
@@ -354,7 +432,11 @@ int __open_2(const char* pathname, int flags) {
     static orig___open_2_t orig = NULL;
     if (!orig) orig = (orig___open_2_t)dlsym(RTLD_NEXT, "__open_2");
     char buf[1024];
-    return orig(redirect_path(pathname, buf, sizeof(buf)), flags);
+    const char* rpath = redirect_path(pathname, buf, sizeof(buf));
+    if (is_proc_maps_path(rpath) && (flags & (O_WRONLY | O_RDWR)) == 0) {
+        return open_virtualized_proc_maps(rpath);
+    }
+    return orig(rpath, flags);
 }
 
 // __openat_2
@@ -1424,8 +1506,16 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
             } else {
                 new_env[write_pos++] = envp[i];
             }
-        } else if (i == libpath_idx && is_system) {
-            continue;
+        } else if (i == libpath_idx) {
+            if (is_system) {
+                continue;
+            } else if (default_libpath[0]) {
+                char buf[1024];
+                snprintf(buf, sizeof(buf), "LD_LIBRARY_PATH=%s", default_libpath);
+                new_env[write_pos++] = strdup(buf);
+            } else {
+                new_env[write_pos++] = envp[i];
+            }
         } else if (strncmp(envp[i], "PREFIX=", 7) == 0) {
             new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
         } else if (strncmp(envp[i], "HOME=", 5) == 0) {
@@ -1708,32 +1798,72 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
         }
         int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
         int already_has_preload = 0;
+        int has_argv0 = 0;
         int argc = 0;
         while (eff_argv && eff_argv[argc]) {
             if (strcmp(eff_argv[argc], "--preload") == 0) already_has_preload = 1;
+            if (strcmp(eff_argv[argc], "--argv0") == 0) has_argv0 = 1;
             argc++;
         }
 
-        if (has_preload && !already_has_preload && argc >= 1) {
-            // Insert --preload <glibc_preload> after eff_argv[0]
-            char** new_argv = malloc((argc + 2 + 1) * sizeof(char*));
-            if (new_argv) {
-                new_argv[0] = eff_argv[0];
-                new_argv[1] = "--preload";
-                new_argv[2] = glibc_preload;
-                for (int i = 1; i < argc; i++) new_argv[i + 2] = eff_argv[i];
-                new_argv[argc + 2] = NULL;
-
-                int ret = exec_func(rpath, new_argv, safe_envp);
-                free(new_argv);
-                if (mod_argv) {
-                    for (int i = 0; i < argc; i++) {
-                        if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
-                    }
-                    free(eff_argv);
-                }
-                return ret;
+        int extra_slots = (has_preload && !already_has_preload ? 2 : 0) + (!has_argv0 ? 2 : 0) + 4;
+        char** new_argv = malloc((argc + extra_slots + 1) * sizeof(char*));
+        if (new_argv) {
+            int nidx = 0;
+            new_argv[nidx++] = eff_argv[0];
+            if (has_preload && !already_has_preload) {
+                new_argv[nidx++] = "--preload";
+                new_argv[nidx++] = glibc_preload;
             }
+
+            int target_binary_idx = -1;
+            for (int i = 1; i < argc; i++) {
+                if (strcmp(eff_argv[i], "--library-path") == 0 && i + 1 < argc) {
+                    new_argv[nidx++] = eff_argv[i];
+                    i++;
+                    char rlib[1024];
+                    const char* redirected_lib = redirect_path(eff_argv[i], rlib, sizeof(rlib));
+                    new_argv[nidx++] = (redirected_lib != eff_argv[i]) ? strdup(redirected_lib) : eff_argv[i];
+                    continue;
+                }
+                if (eff_argv[i][0] == '-') {
+                    new_argv[nidx++] = eff_argv[i];
+                    continue;
+                }
+                if (target_binary_idx < 0) {
+                    target_binary_idx = i;
+                    if (!has_argv0) {
+                        new_argv[nidx++] = "--argv0";
+                        new_argv[nidx++] = eff_argv[i];
+                    }
+                    char rbin[1024];
+                    const char* redirected_bin = redirect_path(eff_argv[i], rbin, sizeof(rbin));
+                    new_argv[nidx++] = (redirected_bin != eff_argv[i]) ? strdup(redirected_bin) : eff_argv[i];
+                    continue;
+                }
+                new_argv[nidx++] = eff_argv[i];
+            }
+            new_argv[nidx] = NULL;
+
+            int ret = exec_func(rpath, new_argv, safe_envp);
+            for (int k = 0; k < nidx; k++) {
+                if (new_argv[k] && new_argv[k] != eff_argv[0] && strcmp(new_argv[k], "--preload") != 0 &&
+                    new_argv[k] != glibc_preload && strcmp(new_argv[k], "--argv0") != 0) {
+                    int found_in_eff = 0;
+                    for (int j = 0; j < argc; j++) {
+                        if (new_argv[k] == eff_argv[j]) { found_in_eff = 1; break; }
+                    }
+                    if (!found_in_eff) free(new_argv[k]);
+                }
+            }
+            free(new_argv);
+            if (mod_argv) {
+                for (int i = 0; i < argc; i++) {
+                    if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                }
+                free(eff_argv);
+            }
+            return ret;
         }
     }
 
@@ -2036,8 +2166,136 @@ int posix_spawn(pid_t* pid, const char* path, const void* file_actions, const vo
 
     char elf_interp[512] = {0};
     int is_glibc = check_is_glibc_binary(rpath, elf_interp, sizeof(elf_interp));
+    int is_loader = (strstr(rpath, "ld-linux") != NULL);
+    if (is_loader) {
+        is_glibc = 1;
+        ensure_glibc_environment(current_app_dir);
+    }
     int is_system = is_system_binary(rpath);
     char** safe_envp = ensure_env(envp ? envp : environ, is_glibc, is_system);
+
+    if (is_glibc && elf_interp[0] != '\0' && strstr(elf_interp, "ld-linux") != NULL) {
+        char interp_buf[1024];
+        const char* rinterp = redirect_path(elf_interp, interp_buf, sizeof(interp_buf));
+        char glibc_loader_path[512] = {0};
+        char glibc_lib_dir[512] = {0};
+
+        if (current_app_dir[0]) {
+            snprintf(glibc_loader_path, sizeof(glibc_loader_path), "%s/files/usr/glibc/lib/ld-linux-aarch64.so.1", current_app_dir);
+            snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s/files/usr/glibc/lib", current_app_dir);
+        } else if (rinterp != elf_interp || access(rinterp, X_OK) == 0) {
+            snprintf(glibc_loader_path, sizeof(glibc_loader_path), "%s", rinterp);
+            snprintf(glibc_lib_dir, sizeof(glibc_lib_dir), "%s", rinterp);
+            char* last_slash = strrchr(glibc_lib_dir, '/');
+            if (last_slash) *last_slash = '\0';
+        }
+
+        if (glibc_loader_path[0] && access(glibc_loader_path, X_OK) == 0) {
+            ensure_glibc_environment(current_app_dir);
+
+            char glibc_preload[512] = {0};
+            if (current_app_dir[0]) {
+                snprintf(glibc_preload, sizeof(glibc_preload), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", current_app_dir);
+            }
+            int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
+
+            int argc = 0;
+            while (argv && argv[argc]) argc++;
+
+            int extra_args = 5 + (has_preload ? 2 : 0);
+            char** new_argv = malloc((argc + extra_args + 1) * sizeof(char*));
+            if (new_argv) {
+                int idx = 0;
+                new_argv[idx++] = glibc_loader_path;
+                new_argv[idx++] = "--library-path";
+                new_argv[idx++] = glibc_lib_dir;
+                if (has_preload) {
+                    new_argv[idx++] = "--preload";
+                    new_argv[idx++] = glibc_preload;
+                }
+                new_argv[idx++] = "--argv0";
+                new_argv[idx++] = argv[0] ? argv[0] : (char*)rpath;
+                new_argv[idx++] = (char*)rpath;
+                for (int i = 1; i < argc; i++) new_argv[idx++] = argv[i];
+                new_argv[idx] = NULL;
+
+                int ret = o_posix_spawn(pid, glibc_loader_path, file_actions, attrp, new_argv, safe_envp);
+                free(new_argv);
+                return ret;
+            }
+        }
+    }
+
+    if (is_loader) {
+        char glibc_preload[512] = {0};
+        if (current_app_dir[0]) {
+            snprintf(glibc_preload, sizeof(glibc_preload), "%s/files/usr/glibc/lib/libtermex-redirect-glibc.so", current_app_dir);
+        }
+        int has_preload = (glibc_preload[0] && access(glibc_preload, R_OK) == 0);
+        int already_has_preload = 0;
+        int has_argv0 = 0;
+        int argc = 0;
+        while (argv && argv[argc]) {
+            if (strcmp(argv[argc], "--preload") == 0) already_has_preload = 1;
+            if (strcmp(argv[argc], "--argv0") == 0) has_argv0 = 1;
+            argc++;
+        }
+
+        int extra_slots = (has_preload && !already_has_preload ? 2 : 0) + (!has_argv0 ? 2 : 0) + 4;
+        char** new_argv = malloc((argc + extra_slots + 1) * sizeof(char*));
+        if (new_argv) {
+            int nidx = 0;
+            new_argv[nidx++] = argv[0];
+            if (has_preload && !already_has_preload) {
+                new_argv[nidx++] = "--preload";
+                new_argv[nidx++] = glibc_preload;
+            }
+
+            int target_binary_idx = -1;
+            for (int i = 1; i < argc; i++) {
+                if (strcmp(argv[i], "--library-path") == 0 && i + 1 < argc) {
+                    new_argv[nidx++] = argv[i];
+                    i++;
+                    char rlib[1024];
+                    const char* redirected_lib = redirect_path(argv[i], rlib, sizeof(rlib));
+                    new_argv[nidx++] = (redirected_lib != argv[i]) ? strdup(redirected_lib) : argv[i];
+                    continue;
+                }
+                if (argv[i][0] == '-') {
+                    new_argv[nidx++] = argv[i];
+                    continue;
+                }
+                if (target_binary_idx < 0) {
+                    target_binary_idx = i;
+                    if (!has_argv0) {
+                        new_argv[nidx++] = "--argv0";
+                        new_argv[nidx++] = argv[i];
+                    }
+                    char rbin[1024];
+                    const char* redirected_bin = redirect_path(argv[i], rbin, sizeof(rbin));
+                    new_argv[nidx++] = (redirected_bin != argv[i]) ? strdup(redirected_bin) : argv[i];
+                    continue;
+                }
+                new_argv[nidx++] = argv[i];
+            }
+            new_argv[nidx] = NULL;
+
+            int ret = o_posix_spawn(pid, rpath, file_actions, attrp, new_argv, safe_envp);
+            for (int k = 0; k < nidx; k++) {
+                if (new_argv[k] && new_argv[k] != argv[0] && strcmp(new_argv[k], "--preload") != 0 &&
+                    new_argv[k] != glibc_preload && strcmp(new_argv[k], "--argv0") != 0) {
+                    int found_in_argv = 0;
+                    for (int j = 0; j < argc; j++) {
+                        if (new_argv[k] == argv[j]) { found_in_argv = 1; break; }
+                    }
+                    if (!found_in_argv) free(new_argv[k]);
+                }
+            }
+            free(new_argv);
+            return ret;
+        }
+    }
+
     return o_posix_spawn(pid, rpath, file_actions, attrp, argv, safe_envp);
 }
 
