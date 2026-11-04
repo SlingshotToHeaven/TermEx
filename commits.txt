@@ -313,5 +313,34 @@ DESCRIPTION:
      - Verified: 'getent ahostsv4 google.com' and 'getent ahostsv4 daily-cloudcode-pa.googleapis.com' resolve immediately with exit code 0 on User 10.
      - Verified: agy connects to Google APIs over TLS, authenticates, and retrieves model/quota status cleanly without any DNS or executor construction errors.
 
+COMMIT 28: [c2cb080] - 2026-11-04 10:20:00 +0530
+MESSAGE: "feat: Flawless bidirectional virtualization for Termux pathing, OpenJDK, glibc, and process spawning, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Implement flawless bidirectional virtualization across Bionic and Glibc runtimes so guest programs have zero awareness of TermEx or secondary user profile isolation:
+  1. Universal Inbound Path Virtualization:
+     - Intercept /data/data/com.termux, /tmp, /usr/bin/env, /bin/sh, /bin/bash, and /usr/* across both Bionic (libtermex-redirect.so) and Glibc (libtermex-redirect-glibc.so).
+     - Transparently forward all path operations (open, stat, access, opendir, exec, spawn, etc.) to physical app storage (/data/user/<id>/com.termex).
+  2. Complete Outbound Path Virtualization (Masking):
+     - getcwd() interposition virtualizes returned buffer so programs always see /data/data/com.termux/files/...
+     - realpath(), readlink(), readlinkat(), __readlink_chk(), __readlinkat_chk() virtualize all returned paths back to canonical /data/data/com.termux/...
+     - dladdr() interposition virtualizes dlinfo.dli_fname to canonical /data/data/com.termux/... so OpenJDK java.home, os::jvm_path, and native modules resolve canonical paths.
+     - getpwuid(), getpwuid_r(), getpwnam(), getpwnam_r() virtualize user pw_dir to /data/data/com.termux/files/home and pw_shell to /data/data/com.termux/files/usr/bin/bash.
+  3. Dynamic Linking & Runtime Virtualization:
+     - Intercept dlopen() so dynamic library loads of canonical paths (e.g. OpenJDK's dlopen("/data/data/com.termux/.../libjvm.so")) redirect to physical storage without linker failures.
+     - Scope sanitize_exec_argv() strictly to Android framework 'am' commands to prevent leaking com.termex into general program command arguments.
+  4. Cross-Runtime Process & Shebang Execution Bridge:
+     - Added posix_spawn() and posix_spawnp() interposition to both Bionic and Glibc redirect libraries.
+     - Automatically parse script shebangs (#!/usr/bin/env <cmd>, #!/bin/sh, #!/bin/bash) and execute the interpreter directly, bypassing Android rootfs missing /usr/bin/env or /bin/sh.
+     - In Glibc (libtermex-redirect-glibc.so), bridge child processes into Bionic by injecting LD_PRELOAD, LD_LIBRARY_PATH, TERMEX_REAL_APP_DIR, and canonical environment variables whenever a Bionic executable (such as bash, java, gradlew) is spawned from a Glibc process (such as agy).
+  5. Canonical Shell Environment & Installer Enhancements:
+     - TermuxShellEnvironment.java: export canonical HOME, PREFIX, TMPDIR, PATH, SHELL, GRADLE_USER_HOME, ANDROID_HOME, ANDROID_SDK_ROOT, and auto-detect OpenJDK in lib/jvm to export canonical JAVA_HOME.
+     - TermuxInstaller.java: automatically create $PREFIX/tmp directory with mode 0777 and copy redirect libraries.
+  6. Live Device Verification (User 10):
+     - Verified: pwd, os.path.expanduser('~'), ls -d /data/data/com.termux/files/usr, /tmp access all succeed canonically.
+     - Verified: 'java -XshowSettings:properties -version' reports user.home, user.dir, java.home, and java.io.tmpdir as 100% canonical /data/data/com.termux/...
+     - Verified: './gradlew --version' and './gradlew help' inside project 'hentoid' run cleanly without daemon lockfile or analytics permission errors (BUILD SUCCESSFUL).
+
+
 
 

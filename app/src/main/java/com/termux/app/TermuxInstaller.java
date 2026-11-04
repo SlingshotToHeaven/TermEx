@@ -441,6 +441,15 @@ final class TermuxInstaller {
             Logger.logError(LOG_TAG, "Failed to install libtermex-redirect.so: " + e.getMessage());
         }
 
+        try {
+            File tmpDir = TermuxConstants.TERMUX_TMP_PREFIX_DIR;
+            if (!tmpDir.exists()) {
+                tmpDir.mkdirs();
+            }
+            //noinspection OctalInteger
+            Os.chmod(tmpDir.getAbsolutePath(), 0777);
+        } catch (Exception ignored) {}
+
         setupGlibcEnvironmentIfNeeded(context);
         patchBinScriptsIfNeeded();
         createWhatIsTermExFileIfNeeded(context);

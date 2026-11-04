@@ -80,33 +80,42 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         if (termuxApiAppEnvironment != null)
             environment.putAll(termuxApiAppEnvironment);
 
-        environment.put(ENV_HOME, TermuxConstants.TERMUX_HOME_DIR_PATH);
-        environment.put(ENV_PREFIX, TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+        // Guest binaries see 100% canonical Termux environment
+        environment.put(ENV_HOME, "/data/data/com.termux/files/home");
+        environment.put(ENV_PREFIX, "/data/data/com.termux/files/usr");
 
         // If failsafe is not enabled, then we keep default PATH and TMPDIR so that system binaries can be used
         if (!isFailSafe) {
-            environment.put(ENV_TMPDIR, TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
-            if (TermuxBootstrap.isAppPackageVariantAPTAndroid5()) {
-                // Termux in android 5/6 era shipped busybox binaries in applets directory
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets");
-                environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
-            } else {
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
-                if ("/data/data/com.termux/files/usr".equals(TermuxConstants.TERMUX_PREFIX_DIR_PATH)) {
-                    // Default upstream path on primary user relies on DT_RUNPATH, so LD_LIBRARY_PATH is unset
-                    environment.remove(ENV_LD_LIBRARY_PATH);
-                } else {
-                    // For secondary users and custom app paths, point LD_LIBRARY_PATH to prefix lib directory
-                    environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+            environment.put(ENV_TMPDIR, "/data/data/com.termux/files/usr/tmp");
+            environment.put(ENV_PATH, "/data/data/com.termux/files/usr/bin");
 
-                    File redirectLib = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH, "libtermex-redirect.so");
-                    if (!redirectLib.exists() && currentPackageContext.getApplicationInfo() != null && currentPackageContext.getApplicationInfo().nativeLibraryDir != null) {
-                        redirectLib = new File(currentPackageContext.getApplicationInfo().nativeLibraryDir, "libtermex-redirect.so");
-                    }
-                    if (redirectLib.exists()) {
-                        environment.put("LD_PRELOAD", redirectLib.getAbsolutePath());
-                        environment.put("TERMEX_REAL_APP_DIR", TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH);
-                    }
+            // Point LD_LIBRARY_PATH to physical prefix lib directory for the Bionic dynamic linker
+            environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+
+            File redirectLib = new File(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH, "libtermex-redirect.so");
+            if (!redirectLib.exists() && currentPackageContext.getApplicationInfo() != null && currentPackageContext.getApplicationInfo().nativeLibraryDir != null) {
+                redirectLib = new File(currentPackageContext.getApplicationInfo().nativeLibraryDir, "libtermex-redirect.so");
+            }
+            if (redirectLib.exists()) {
+                environment.put("LD_PRELOAD", redirectLib.getAbsolutePath());
+                environment.put("TERMEX_REAL_APP_DIR", TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH);
+            }
+
+            // Expose canonical build-tool and runtime variables
+            environment.put("SHELL", "/data/data/com.termux/files/usr/bin/bash");
+            environment.put("GRADLE_USER_HOME", "/data/data/com.termux/files/home/.gradle");
+            environment.put("ANDROID_HOME", "/data/data/com.termux/files/home/android-sdk");
+            environment.put("ANDROID_SDK_ROOT", "/data/data/com.termux/files/home/android-sdk");
+
+            // If an OpenJDK installation is present in the physical lib/jvm, export canonical JAVA_HOME
+            File jvmDir = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "lib/jvm");
+            if (jvmDir.isDirectory()) {
+                File jdk21 = new File(jvmDir, "java-21-openjdk");
+                File jdk17 = new File(jvmDir, "java-17-openjdk");
+                if (jdk21.exists()) {
+                    environment.put("JAVA_HOME", "/data/data/com.termux/files/usr/lib/jvm/java-21-openjdk");
+                } else if (jdk17.exists()) {
+                    environment.put("JAVA_HOME", "/data/data/com.termux/files/usr/lib/jvm/java-17-openjdk");
                 }
             }
         }

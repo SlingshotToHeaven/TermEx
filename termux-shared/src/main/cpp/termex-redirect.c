@@ -18,6 +18,7 @@
 #include <elf.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <pwd.h>
 
 static const char TARGET_PREFIX1[] = "/data/data/com.termux";
 static const size_t TARGET_LEN1 = sizeof(TARGET_PREFIX1) - 1;
@@ -27,6 +28,9 @@ static const char TARGET_PREFIX3[] = "/data/data/com.termex";
 static const size_t TARGET_LEN3 = sizeof(TARGET_PREFIX3) - 1;
 static const char TARGET_PREFIX4[] = "/data/user/0/com.termex";
 static const size_t TARGET_LEN4 = sizeof(TARGET_PREFIX4) - 1;
+
+static const char CANONICAL_HOME[] = "/data/data/com.termux/files/home";
+static const char CANONICAL_SHELL[] = "/data/data/com.termux/files/usr/bin/bash";
 
 static char current_app_dir[512] = {0};
 static size_t current_app_dir_len = 0;
@@ -132,7 +136,7 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
 
     // Fast rejection for non-matching paths
     char c0 = path[0];
-    if (c0 != '/' && c0 != '.' && c0 != 'd') {
+    if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') {
         return path;
     }
 
@@ -151,6 +155,36 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
     // Skip leading '/' (including redundant consecutive slashes)
     while (*p == '/') {
         p++;
+    }
+
+    // 1. Check for /tmp
+    if (strncmp(p, "tmp", 3) == 0 && (p[3] == '\0' || p[3] == '/')) {
+        snprintf(buffer, bufsize, "%s/files/usr/tmp%s", current_app_dir, p + 3);
+        return buffer;
+    }
+
+    // 2. Check for /usr/bin/env
+    if (strncmp(p, "usr/bin/env", 11) == 0 && (p[11] == '\0' || p[11] == '/')) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/env%s", current_app_dir, p + 11);
+        return buffer;
+    }
+
+    // 3. Check for /bin/sh
+    if (strcmp(p, "bin/sh") == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/sh", current_app_dir);
+        return buffer;
+    }
+
+    // 4. Check for /bin/bash
+    if (strcmp(p, "bin/bash") == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/bash", current_app_dir);
+        return buffer;
+    }
+
+    // 5. Check for general /usr/... (e.g. /usr/bin/..., /usr/share/...)
+    if (strncmp(p, "usr/", 4) == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/%s", current_app_dir, p + 4);
+        return buffer;
     }
 
     // Must start with "data/"
@@ -463,28 +497,90 @@ int faccessat(int dirfd, const char* pathname, int mode, int flags) {
     return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, flags);
 }
 
+static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz);
+
+// dlopen
+typedef void* (*orig_dlopen_t)(const char*, int);
+void* dlopen(const char* filename, int flag) {
+    static orig_dlopen_t orig = NULL;
+    if (!orig) orig = (orig_dlopen_t)dlsym(RTLD_NEXT, "dlopen");
+    if (!filename) return orig ? orig(filename, flag) : NULL;
+    char buf[1024];
+    const char* rpath = redirect_path(filename, buf, sizeof(buf));
+    return orig ? orig(rpath, flag) : NULL;
+}
+
+// dladdr
+typedef int (*orig_dladdr_t)(const void*, Dl_info*);
+int dladdr(const void* addr, Dl_info* info) {
+    static orig_dladdr_t orig = NULL;
+    if (!orig) orig = (orig_dladdr_t)dlsym(RTLD_NEXT, "dladdr");
+    int ret = orig ? orig(addr, info) : 0;
+    if (ret && info && info->dli_fname && current_app_dir_len > 0) {
+        static __thread char vfname[1024];
+        size_t len = strlen(info->dli_fname);
+        if (len < sizeof(vfname)) {
+            memcpy(vfname, info->dli_fname, len + 1);
+            virtualize_returned_path(vfname, (ssize_t)len, sizeof(vfname));
+            info->dli_fname = vfname;
+        }
+    }
+    return ret;
+}
+
 static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz) {
     if (len <= 0 || !buf || current_app_dir_len == 0) return len;
-    // Check if the returned buffer starts with current_app_dir
-    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0) {
-        char suffix[1024];
-        size_t slen = len - current_app_dir_len;
-        if (slen < sizeof(suffix)) {
-            memcpy(suffix, buf + current_app_dir_len, slen);
-            suffix[slen] = '\0';
-            char vpath[1024];
-            int user_id = getuid() / 100000;
-            int n;
-            if (user_id > 0) {
-                n = snprintf(vpath, sizeof(vpath), "/data/user/%d/com.termux%s", user_id, suffix);
-            } else {
-                n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+
+    const char* matched_prefix = NULL;
+    size_t matched_prefix_len = 0;
+
+    // 1. Match current_app_dir (e.g. /data/user/10/com.termex or /data/data/com.termex)
+    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0 &&
+        (buf[current_app_dir_len] == '\0' || buf[current_app_dir_len] == '/')) {
+        matched_prefix = current_app_dir;
+        matched_prefix_len = current_app_dir_len;
+    }
+    // 2. Match /data/data/com.termex
+    else if ((size_t)len >= TARGET_LEN3 && strncmp(buf, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
+             (buf[TARGET_LEN3] == '\0' || buf[TARGET_LEN3] == '/')) {
+        matched_prefix = TARGET_PREFIX3;
+        matched_prefix_len = TARGET_LEN3;
+    }
+    // 3. Match /data/user/0/com.termex
+    else if ((size_t)len >= TARGET_LEN4 && strncmp(buf, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
+             (buf[TARGET_LEN4] == '\0' || buf[TARGET_LEN4] == '/')) {
+        matched_prefix = TARGET_PREFIX4;
+        matched_prefix_len = TARGET_LEN4;
+    }
+    // 4. Match /data/user/0/com.termux
+    else if ((size_t)len >= TARGET_LEN2 && strncmp(buf, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
+             (buf[TARGET_LEN2] == '\0' || buf[TARGET_LEN2] == '/')) {
+        matched_prefix = TARGET_PREFIX2;
+        matched_prefix_len = TARGET_LEN2;
+    }
+    // 5. Match /data/user/<id>/com.termux or /data/user/<id>/com.termex
+    else if (strncmp(buf, "/data/user/", 11) == 0) {
+        const char* after = buf + 11;
+        while (*after >= '0' && *after <= '9') after++;
+        if (*after == '/') {
+            if ((strncmp(after + 1, "com.termux", 10) == 0 && (after[11] == '/' || after[11] == '\0')) ||
+                (strncmp(after + 1, "com.termex", 10) == 0 && (after[11] == '/' || after[11] == '\0'))) {
+                matched_prefix = buf;
+                matched_prefix_len = (after + 11) - buf;
             }
-            if (n > 0) {
-                size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz;
-                memcpy(buf, vpath, to_copy);
-                return (ssize_t)to_copy;
-            }
+        }
+    }
+
+    if (matched_prefix && matched_prefix_len > 0) {
+        const char* suffix = buf + matched_prefix_len;
+        char vpath[1024];
+        // ALWAYS virtualize to canonical OG Termux path (/data/data/com.termux)
+        int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+        if (n > 0) {
+            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz - 1;
+            memcpy(buf, vpath, to_copy);
+            buf[to_copy] = '\0';
+            return (ssize_t)to_copy;
         }
     }
     return len;
@@ -497,7 +593,7 @@ ssize_t readlink(const char* pathname, char* buf, size_t bufsiz) {
     if (!orig) orig = (orig_readlink_t)dlsym(RTLD_NEXT, "readlink");
     char tbuf[1024];
     ssize_t ret = orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
-    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+    if (ret > 0) {
         ret = virtualize_returned_path(buf, ret, bufsiz);
     }
     return ret;
@@ -510,7 +606,7 @@ ssize_t readlinkat(int dirfd, const char* pathname, char* buf, size_t bufsiz) {
     if (!orig) orig = (orig_readlinkat_t)dlsym(RTLD_NEXT, "readlinkat");
     char tbuf[1024];
     ssize_t ret = orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz);
-    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+    if (ret > 0) {
         ret = virtualize_returned_path(buf, ret, bufsiz);
     }
     return ret;
@@ -523,7 +619,7 @@ ssize_t __readlink_chk(const char* pathname, char* buf, size_t bufsiz, size_t bu
     if (!orig) orig = (orig___readlink_chk_t)dlsym(RTLD_NEXT, "__readlink_chk");
     char tbuf[1024];
     ssize_t ret = orig(redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
-    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+    if (ret > 0) {
         ret = virtualize_returned_path(buf, ret, bufsiz);
     }
     return ret;
@@ -536,7 +632,7 @@ ssize_t __readlinkat_chk(int dirfd, const char* pathname, char* buf, size_t bufs
     if (!orig) orig = (orig___readlinkat_chk_t)dlsym(RTLD_NEXT, "__readlinkat_chk");
     char tbuf[1024];
     ssize_t ret = orig(dirfd, redirect_path(pathname, tbuf, sizeof(tbuf)), buf, bufsiz, buflen);
-    if (ret > 0 && pathname && strstr(pathname, "/proc/")) {
+    if (ret > 0) {
         ret = virtualize_returned_path(buf, ret, bufsiz);
     }
     return ret;
@@ -549,9 +645,22 @@ char* realpath(const char* path, char* resolved_path) {
     if (!orig) orig = (orig_realpath_t)dlsym(RTLD_NEXT, "realpath");
     char buf[1024];
     char* ret = orig(redirect_path(path, buf, sizeof(buf)), resolved_path);
-    if (ret && path && strstr(path, "/proc/")) {
+    if (ret) {
         size_t len = strlen(ret);
         virtualize_returned_path(ret, (ssize_t)len, len + 128);
+    }
+    return ret;
+}
+
+// getcwd
+typedef char* (*orig_getcwd_t)(char*, size_t);
+char* getcwd(char* buf, size_t size) {
+    static orig_getcwd_t orig = NULL;
+    if (!orig) orig = (orig_getcwd_t)dlsym(RTLD_NEXT, "getcwd");
+    char* ret = orig(buf, size);
+    if (ret) {
+        size_t len = strlen(ret);
+        virtualize_returned_path(ret, (ssize_t)len, size > 0 ? size : (len + 128));
     }
     return ret;
 }
@@ -572,7 +681,8 @@ int chdir(const char* path) {
     // If path is relative (e.g. coreutils mkdir -p stepping into "data" from "/data" or "com.termux" from "/data/user/10")
     if (path[0] != '/') {
         char cwd[512] = {0};
-        if (getcwd(cwd, sizeof(cwd))) {
+        orig_getcwd_t o_getcwd = (orig_getcwd_t)dlsym(RTLD_NEXT, "getcwd");
+        if (o_getcwd && o_getcwd(cwd, sizeof(cwd))) {
             char combined[1024];
             if (strcmp(cwd, "/") == 0) {
                 snprintf(combined, sizeof(combined), "/%s", path);
@@ -587,6 +697,55 @@ int chdir(const char* path) {
     }
 
     return orig(path);
+}
+
+// Passwd virtualization
+typedef struct passwd* (*orig_getpwuid_t)(uid_t);
+struct passwd* getpwuid(uid_t uid) {
+    static orig_getpwuid_t orig = NULL;
+    if (!orig) orig = (orig_getpwuid_t)dlsym(RTLD_NEXT, "getpwuid");
+    struct passwd* pw = orig ? orig(uid) : NULL;
+    if (pw) {
+        pw->pw_dir = (char*)CANONICAL_HOME;
+        pw->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return pw;
+}
+
+typedef int (*orig_getpwuid_r_t)(uid_t, struct passwd*, char*, size_t, struct passwd**);
+int getpwuid_r(uid_t uid, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+    static orig_getpwuid_r_t orig = NULL;
+    if (!orig) orig = (orig_getpwuid_r_t)dlsym(RTLD_NEXT, "getpwuid_r");
+    int ret = orig ? orig(uid, pwd, buf, buflen, result) : -1;
+    if (ret == 0 && result && *result) {
+        (*result)->pw_dir = (char*)CANONICAL_HOME;
+        (*result)->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return ret;
+}
+
+typedef struct passwd* (*orig_getpwnam_t)(const char*);
+struct passwd* getpwnam(const char* name) {
+    static orig_getpwnam_t orig = NULL;
+    if (!orig) orig = (orig_getpwnam_t)dlsym(RTLD_NEXT, "getpwnam");
+    struct passwd* pw = orig ? orig(name) : NULL;
+    if (pw) {
+        pw->pw_dir = (char*)CANONICAL_HOME;
+        pw->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return pw;
+}
+
+typedef int (*orig_getpwnam_r_t)(const char*, struct passwd*, char*, size_t, struct passwd**);
+int getpwnam_r(const char* name, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+    static orig_getpwnam_r_t orig = NULL;
+    if (!orig) orig = (orig_getpwnam_r_t)dlsym(RTLD_NEXT, "getpwnam_r");
+    int ret = orig ? orig(name, pwd, buf, buflen, result) : -1;
+    if (ret == 0 && result && *result) {
+        (*result)->pw_dir = (char*)CANONICAL_HOME;
+        (*result)->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return ret;
 }
 
 // opendir
@@ -1143,13 +1302,15 @@ static void ensure_glibc_environment(const char* app_dir) {
 static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     int count = 0;
     int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
-    int termux_ver_idx = -1, prefix_idx = -1;
+    int termux_ver_idx = -1, prefix_idx = -1, home_idx = -1, tmpdir_idx = -1;
     while (envp && envp[count]) {
         if (strncmp(envp[count], "LD_PRELOAD=", 11) == 0) preload_idx = count;
         if (strncmp(envp[count], "LD_LIBRARY_PATH=", 16) == 0) libpath_idx = count;
         if (strncmp(envp[count], "TERMEX_REAL_APP_DIR=", 20) == 0) appdir_idx = count;
         if (strncmp(envp[count], "TERMUX_VERSION=", 15) == 0) termux_ver_idx = count;
         if (strncmp(envp[count], "PREFIX=", 7) == 0) prefix_idx = count;
+        if (strncmp(envp[count], "HOME=", 5) == 0) home_idx = count;
+        if (strncmp(envp[count], "TMPDIR=", 7) == 0) tmpdir_idx = count;
         count++;
     }
     const char* cur_preload = getenv("LD_PRELOAD");
@@ -1158,6 +1319,7 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
         cur_libpath = default_libpath;
     }
     const char* cur_app_dir = current_app_dir;
+    size_t cur_app_dir_len = current_app_dir_len;
 
     char redirect_so_path[512] = {0};
     if (cur_preload) {
@@ -1223,9 +1385,9 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
                 (!is_system && libpath_idx < 0 && cur_libpath ? 1 : 0) +
                 (appdir_idx < 0 && cur_app_dir[0] ? 1 : 0) +
                 (termux_ver_idx < 0 ? 1 : 0) +
-                (prefix_idx < 0 && cur_app_dir[0] ? 1 : 0);
-
-    if (extra == 0 && !need_modify_preload) return (char**)envp;
+                (prefix_idx < 0 ? 1 : 0) +
+                (home_idx < 0 ? 1 : 0) +
+                (tmpdir_idx < 0 ? 1 : 0);
 
     char** new_env = malloc((count + extra + 1) * sizeof(char*));
     if (!new_env) return (char**)envp;
@@ -1236,48 +1398,54 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
                 if (combined_preload[0] != '\0') {
                     new_env[write_pos++] = strdup(combined_preload);
                 }
-                // If combined_preload is empty, it was stripped (e.g. for glibc or bare system)
             } else {
                 new_env[write_pos++] = envp[i];
             }
         } else if (i == libpath_idx && is_system) {
-            // Strip LD_LIBRARY_PATH for Android system binaries to prevent linking against app libraries
             continue;
+        } else if (strncmp(envp[i], "PREFIX=", 7) == 0) {
+            new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+        } else if (strncmp(envp[i], "HOME=", 5) == 0) {
+            new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+        } else if (strncmp(envp[i], "TMPDIR=", 7) == 0) {
+            new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
         } else if (strncmp(envp[i], "PATH=", 5) == 0 &&
-                   (strstr(envp[i], TARGET_PREFIX1) || strstr(envp[i], TARGET_PREFIX2) ||
-                    strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
+                   (strstr(envp[i], cur_app_dir) || strstr(envp[i], TARGET_PREFIX3) || strstr(envp[i], TARGET_PREFIX4))) {
             char new_path[4096];
             const char* src = envp[i];
             char* dst = new_path;
             size_t rem = sizeof(new_path) - 1;
             while (*src && rem > 0) {
-                if (strncmp(src, TARGET_PREFIX1, TARGET_LEN1) == 0) {
-                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
-                    dst += n;
-                    rem -= n;
-                    src += TARGET_LEN1;
-                } else if (strncmp(src, TARGET_PREFIX2, TARGET_LEN2) == 0) {
-                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
-                    dst += n;
-                    rem -= n;
-                    src += TARGET_LEN2;
+                if (cur_app_dir_len > 0 && strncmp(src, cur_app_dir, cur_app_dir_len) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", TARGET_PREFIX1);
+                    dst += n; rem -= n; src += cur_app_dir_len;
                 } else if (strncmp(src, TARGET_PREFIX3, TARGET_LEN3) == 0) {
-                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
-                    dst += n;
-                    rem -= n;
-                    src += TARGET_LEN3;
+                    size_t n = snprintf(dst, rem, "%s", TARGET_PREFIX1);
+                    dst += n; rem -= n; src += TARGET_LEN3;
                 } else if (strncmp(src, TARGET_PREFIX4, TARGET_LEN4) == 0) {
-                    size_t n = snprintf(dst, rem, "%s", cur_app_dir);
-                    dst += n;
-                    rem -= n;
-                    src += TARGET_LEN4;
+                    size_t n = snprintf(dst, rem, "%s", TARGET_PREFIX1);
+                    dst += n; rem -= n; src += TARGET_LEN4;
                 } else {
-                    *dst++ = *src++;
-                    rem--;
+                    *dst++ = *src++; rem--;
                 }
             }
             *dst = '\0';
             new_env[write_pos++] = strdup(new_path);
+        } else if (strncmp(envp[i], "JAVA_HOME=", 10) == 0 && cur_app_dir_len > 0 && strstr(envp[i], cur_app_dir)) {
+            char new_jh[2048];
+            const char* src = envp[i];
+            char* dst = new_jh;
+            size_t rem = sizeof(new_jh) - 1;
+            while (*src && rem > 0) {
+                if (strncmp(src, cur_app_dir, cur_app_dir_len) == 0) {
+                    size_t n = snprintf(dst, rem, "%s", TARGET_PREFIX1);
+                    dst += n; rem -= n; src += cur_app_dir_len;
+                } else {
+                    *dst++ = *src++; rem--;
+                }
+            }
+            *dst = '\0';
+            new_env[write_pos++] = strdup(new_jh);
         } else {
             new_env[write_pos++] = envp[i];
         }
@@ -1300,10 +1468,14 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
     if (termux_ver_idx < 0) {
         new_env[write_pos++] = strdup("TERMUX_VERSION=0.118.0");
     }
-    if (prefix_idx < 0 && cur_app_dir[0]) {
-        char buf[1024];
-        snprintf(buf, sizeof(buf), "PREFIX=%s/files/usr", cur_app_dir);
-        new_env[write_pos++] = strdup(buf);
+    if (prefix_idx < 0) {
+        new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+    }
+    if (home_idx < 0) {
+        new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+    }
+    if (tmpdir_idx < 0) {
+        new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
     }
     new_env[write_pos] = NULL;
     return new_env;
@@ -1361,14 +1533,13 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
 
     int needs_mod = 0;
     for (int i = 0; i < argc; i++) {
-        if (is_am && user_id > 0 && strcmp(argv[i], "--user") == 0 && i + 1 < argc && strcmp(argv[i+1], "0") == 0) {
-            needs_mod = 1;
-        }
-        if (strstr(argv[i], "com.termux")) {
-            needs_mod = 1;
-        }
-        if (user_id > 0 && (strstr(argv[i], TARGET_PREFIX3) || strstr(argv[i], TARGET_PREFIX4))) {
-            needs_mod = 1;
+        if (is_am) {
+            if (user_id > 0 && strcmp(argv[i], "--user") == 0 && i + 1 < argc && strcmp(argv[i+1], "0") == 0) {
+                needs_mod = 1;
+            }
+            if (strstr(argv[i], "com.termux")) {
+                needs_mod = 1;
+            }
         }
     }
 
@@ -1385,88 +1556,21 @@ static char** sanitize_exec_argv(const char* rpath, char* const argv[], int* mod
         if (slash && *(slash + 1)) real_pkg = slash + 1;
     }
 
-    char u_termux_pfx[64] = {0};
-    if (user_id > 0) {
-        snprintf(u_termux_pfx, sizeof(u_termux_pfx), "/data/user/%d/com.termux", user_id);
-    }
-    size_t u_termux_len = strlen(u_termux_pfx);
-
     for (int i = 0; i < argc; i++) {
         if (is_am && user_id > 0 && strcmp(argv[i], "0") == 0 && i > 0 && strcmp(argv[i-1], "--user") == 0) {
             new_argv[i] = user_id_str;
-        } else if (strstr(argv[i], "com.termux") ||
-                   (user_id > 0 && (strstr(argv[i], TARGET_PREFIX3) || strstr(argv[i], TARGET_PREFIX4)))) {
+        } else if (is_am && strstr(argv[i], "com.termux")) {
             char buf[2048];
             const char* src = argv[i];
             char* dst = buf;
             size_t remain = sizeof(buf) - 1;
             while (*src && remain > 0) {
-                // 1. Filesystem path: /data/data/com.termux
-                if (strncmp(src, TARGET_PREFIX1, TARGET_LEN1) == 0) {
-                    size_t plen = current_app_dir_len;
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, current_app_dir, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += TARGET_LEN1;
-                }
-                // 2. Filesystem path: /data/user/0/com.termux
-                else if (strncmp(src, TARGET_PREFIX2, TARGET_LEN2) == 0) {
-                    size_t plen = current_app_dir_len;
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, current_app_dir, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += TARGET_LEN2;
-                }
-                // 3. Filesystem path: /data/user/<id>/com.termux
-                else if (u_termux_len > 0 && strncmp(src, u_termux_pfx, u_termux_len) == 0) {
-                    size_t plen = current_app_dir_len;
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, current_app_dir, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += u_termux_len;
-                }
-                // 4. Filesystem path on secondary users: /data/data/com.termex -> /data/user/<id>/com.termex
-                else if (user_id > 0 && strncmp(src, TARGET_PREFIX3, TARGET_LEN3) == 0) {
-                    size_t plen = current_app_dir_len;
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, current_app_dir, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += TARGET_LEN3;
-                }
-                // 5. Filesystem path on secondary users: /data/user/0/com.termex -> /data/user/<id>/com.termex
-                else if (user_id > 0 && strncmp(src, TARGET_PREFIX4, TARGET_LEN4) == 0) {
-                    size_t plen = current_app_dir_len;
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, current_app_dir, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += TARGET_LEN4;
-                }
-                // 6. Component reference "com.termux/com.termux."
-                else if (strncmp(src, "com.termux/com.termux.", 22) == 0) {
-                    size_t plen = strlen(real_pkg);
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, real_pkg, plen);
-                    dst += plen;
-                    remain -= plen;
-                    src += 10; // skips "com.termux", leaving "/com.termux." intact
-                }
-                // 7. General com.termux package replacement (not Java package)
-                else if (strncmp(src, "com.termux", 10) == 0 &&
-                           strncmp(src, "com.termux.app", 14) != 0 &&
-                           strncmp(src, "com.termux.shared", 17) != 0 &&
-                           strncmp(src, "com.termux.terminal", 19) != 0 &&
-                           strncmp(src, "com.termux.view", 15) != 0 &&
-                           strncmp(src, "com.termux.filepicker", 21) != 0) {
-                    size_t plen = strlen(real_pkg);
-                    if (plen > remain) plen = remain;
-                    memcpy(dst, real_pkg, plen);
-                    dst += plen;
-                    remain -= plen;
+                if (strncmp(src, "com.termux", 10) == 0) {
+                    size_t rplen = strlen(real_pkg);
+                    if (rplen > remain) rplen = remain;
+                    memcpy(dst, real_pkg, rplen);
+                    dst += rplen;
+                    remain -= rplen;
                     src += 10;
                 } else {
                     *dst++ = *src++;
@@ -1610,33 +1714,66 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
             header[n] = '\0';
             char* nl = strchr(header, '\n');
             if (nl) *nl = '\0';
+            char* cr = strchr(header, '\r');
+            if (cr) *cr = '\0';
+
             char* interp = header + 2;
             while (*interp == ' ' || *interp == '\t') interp++;
-            char interp_buf[1024];
-            const char* rinterp = redirect_path(interp, interp_buf, sizeof(interp_buf));
-            int interp_is_system = is_system_binary(rinterp);
-            char** interp_envp = safe_envp;
-            if (interp_is_system != is_system) {
-                interp_envp = ensure_env(envp, is_glibc, interp_is_system);
-            }
-            if (rinterp != interp) {
-                int argc = 0;
-                while (eff_argv && eff_argv[argc]) argc++;
-                char** new_argv = malloc((argc + 2) * sizeof(char*));
-                if (new_argv) {
-                    new_argv[0] = (char*)rinterp;
-                    new_argv[1] = (char*)rpath;
-                    for (int i = 1; i < argc; i++) new_argv[i + 1] = eff_argv[i];
-                    new_argv[argc + 1] = NULL;
-                    int ret = exec_func(rinterp, new_argv, interp_envp);
-                    free(new_argv);
-                    if (mod_argv) {
-                        for (int i = 0; i < argc; i++) {
-                            if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
-                        }
-                        free(eff_argv);
+            if (*interp != '\0') {
+                char* interp_end = interp;
+                while (*interp_end && *interp_end != ' ' && *interp_end != '\t') interp_end++;
+
+                char* interp_arg = NULL;
+                if (*interp_end != '\0') {
+                    *interp_end = '\0';
+                    interp_arg = interp_end + 1;
+                    while (*interp_arg == ' ' || *interp_arg == '\t') interp_arg++;
+                    if (*interp_arg == '\0') interp_arg = NULL;
+                }
+
+                char resolved_interp[1024];
+                const char* rinterp = NULL;
+
+                if (strcmp(interp, "/usr/bin/env") == 0 && interp_arg) {
+                    // e.g. #!/usr/bin/env bash or #!/usr/bin/env python3
+                    char* next_space = strchr(interp_arg, ' ');
+                    if (next_space) *next_space = '\0';
+                    rinterp = resolve_in_path(interp_arg, resolved_interp, sizeof(resolved_interp));
+                    interp_arg = NULL;
+                } else {
+                    rinterp = redirect_path(interp, resolved_interp, sizeof(resolved_interp));
+                }
+
+                if (rinterp && access(rinterp, X_OK) == 0) {
+                    int interp_is_system = is_system_binary(rinterp);
+                    char** interp_envp = safe_envp;
+                    if (interp_is_system != is_system) {
+                        interp_envp = ensure_env(envp, is_glibc, interp_is_system);
                     }
-                    return ret;
+
+                    int argc = 0;
+                    while (eff_argv && eff_argv[argc]) argc++;
+
+                    int extra = (interp_arg ? 3 : 2);
+                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    if (new_argv) {
+                        int idx = 0;
+                        new_argv[idx++] = (char*)rinterp;
+                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        new_argv[idx++] = (char*)rpath;
+                        for (int i = 1; i < argc; i++) new_argv[idx++] = eff_argv[i];
+                        new_argv[argc + extra - 1] = NULL;
+
+                        int ret = exec_func(rinterp, new_argv, interp_envp);
+                        free(new_argv);
+                        if (mod_argv) {
+                            for (int i = 0; i < argc; i++) {
+                                if (eff_argv[i] != argv[i] && eff_argv[i] != user_id_str) free(eff_argv[i]);
+                            }
+                            free(eff_argv);
+                        }
+                        return ret;
+                    }
                 }
             }
         }
@@ -1788,4 +1925,95 @@ int execle(const char* path, const char* arg0, ...) {
     free(argv);
     return ret;
 }
+
+// posix_spawn
+typedef int (*orig_posix_spawn_t)(pid_t*, const char*, const void*, const void*, char* const[], char* const[]);
+int posix_spawn(pid_t* pid, const char* path, const void* file_actions, const void* attrp, char* const argv[], char* const envp[]) {
+    static orig_posix_spawn_t o_posix_spawn = NULL;
+    static orig_open_t o_open = NULL;
+    if (!o_posix_spawn) o_posix_spawn = (orig_posix_spawn_t)dlsym(RTLD_NEXT, "posix_spawn");
+    if (!o_open) o_open = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    if (!o_posix_spawn) return ENOSYS;
+
+    char buf[1024];
+    const char* rpath = redirect_path(path, buf, sizeof(buf));
+
+    // Handle shebang if script
+    int fd = o_open ? o_open(rpath, O_RDONLY | O_CLOEXEC) : open(rpath, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        char header[256];
+        ssize_t n = read(fd, header, sizeof(header) - 1);
+        close(fd);
+        if (n > 2 && header[0] == '#' && header[1] == '!') {
+            header[n] = '\0';
+            char* nl = strchr(header, '\n');
+            if (nl) *nl = '\0';
+            char* cr = strchr(header, '\r');
+            if (cr) *cr = '\0';
+
+            char* interp = header + 2;
+            while (*interp == ' ' || *interp == '\t') interp++;
+            if (*interp != '\0') {
+                char* interp_end = interp;
+                while (*interp_end && *interp_end != ' ' && *interp_end != '\t') interp_end++;
+
+                char* interp_arg = NULL;
+                if (*interp_end != '\0') {
+                    *interp_end = '\0';
+                    interp_arg = interp_end + 1;
+                    while (*interp_arg == ' ' || *interp_arg == '\t') interp_arg++;
+                    if (*interp_arg == '\0') interp_arg = NULL;
+                }
+
+                char resolved_interp[1024];
+                const char* rinterp = NULL;
+                if (strcmp(interp, "/usr/bin/env") == 0 && interp_arg) {
+                    char* next_space = strchr(interp_arg, ' ');
+                    if (next_space) *next_space = '\0';
+                    rinterp = resolve_in_path(interp_arg, resolved_interp, sizeof(resolved_interp));
+                    interp_arg = NULL;
+                } else {
+                    rinterp = redirect_path(interp, resolved_interp, sizeof(resolved_interp));
+                }
+
+                if (rinterp && access(rinterp, X_OK) == 0) {
+                    int interp_is_system = is_system_binary(rinterp);
+                    char** safe_envp = ensure_env(envp ? envp : environ, 0, interp_is_system);
+
+                    int argc = 0;
+                    while (argv && argv[argc]) argc++;
+
+                    int extra = (interp_arg ? 3 : 2);
+                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    if (new_argv) {
+                        int idx = 0;
+                        new_argv[idx++] = (char*)rinterp;
+                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        new_argv[idx++] = (char*)rpath;
+                        for (int i = 1; i < argc; i++) new_argv[idx++] = argv[i];
+                        new_argv[argc + extra - 1] = NULL;
+
+                        int ret = o_posix_spawn(pid, rinterp, file_actions, attrp, new_argv, safe_envp);
+                        free(new_argv);
+                        return ret;
+                    }
+                }
+            }
+        }
+    }
+
+    char elf_interp[512] = {0};
+    int is_glibc = check_is_glibc_binary(rpath, elf_interp, sizeof(elf_interp));
+    int is_system = is_system_binary(rpath);
+    char** safe_envp = ensure_env(envp ? envp : environ, is_glibc, is_system);
+    return o_posix_spawn(pid, rpath, file_actions, attrp, argv, safe_envp);
+}
+
+// posix_spawnp
+int posix_spawnp(pid_t* pid, const char* file, const void* file_actions, const void* attrp, char* const argv[], char* const envp[]) {
+    char buf[1024];
+    const char* rpath = resolve_in_path(file, buf, sizeof(buf));
+    return posix_spawn(pid, rpath, file_actions, attrp, argv, envp);
+}
+
 

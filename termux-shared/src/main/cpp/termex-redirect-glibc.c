@@ -15,6 +15,21 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <pwd.h>
+#include <elf.h>
+#include <spawn.h>
+
+static const char TARGET_PREFIX1[] = "/data/data/com.termux";
+static const size_t TARGET_LEN1 = sizeof(TARGET_PREFIX1) - 1;
+static const char TARGET_PREFIX2[] = "/data/user/0/com.termux";
+static const size_t TARGET_LEN2 = sizeof(TARGET_PREFIX2) - 1;
+static const char TARGET_PREFIX3[] = "/data/data/com.termex";
+static const size_t TARGET_LEN3 = sizeof(TARGET_PREFIX3) - 1;
+static const char TARGET_PREFIX4[] = "/data/user/0/com.termex";
+static const size_t TARGET_LEN4 = sizeof(TARGET_PREFIX4) - 1;
+
+static const char CANONICAL_HOME[] = "/data/data/com.termux/files/home";
+static const char CANONICAL_SHELL[] = "/data/data/com.termux/files/usr/bin/bash";
 
 static char current_app_dir[512] = {0};
 static size_t current_app_dir_len = 0;
@@ -90,7 +105,7 @@ static const char* redirect_path_glibc(const char* path, char* buffer, size_t bu
     if (!path || current_app_dir_len == 0) return path;
 
     char c0 = path[0];
-    if (c0 != '/' && c0 != '.' && c0 != 'd') return path;
+    if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') return path;
 
     const char* p = path;
     while (p[0] == '.' && p[1] == '/') {
@@ -98,6 +113,36 @@ static const char* redirect_path_glibc(const char* path, char* buffer, size_t bu
         while (*p == '/') p++;
     }
     while (*p == '/') p++;
+
+    // 1. Check for /tmp
+    if (strncmp(p, "tmp", 3) == 0 && (p[3] == '\0' || p[3] == '/')) {
+        snprintf(buffer, bufsize, "%s/files/usr/tmp%s", current_app_dir, p + 3);
+        return buffer;
+    }
+
+    // 2. Check for /usr/bin/env
+    if (strncmp(p, "usr/bin/env", 11) == 0 && (p[11] == '\0' || p[11] == '/')) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/env%s", current_app_dir, p + 11);
+        return buffer;
+    }
+
+    // 3. Check for /bin/sh
+    if (strcmp(p, "bin/sh") == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/sh", current_app_dir);
+        return buffer;
+    }
+
+    // 4. Check for /bin/bash
+    if (strcmp(p, "bin/bash") == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/bin/bash", current_app_dir);
+        return buffer;
+    }
+
+    // 5. Check for general /usr/...
+    if (strncmp(p, "usr/", 4) == 0) {
+        snprintf(buffer, bufsize, "%s/files/usr/%s", current_app_dir, p + 4);
+        return buffer;
+    }
 
     if (strncmp(p, "data/", 5) != 0) return path;
 
@@ -145,6 +190,63 @@ static const char* redirect_path_glibc(const char* path, char* buffer, size_t bu
     return path;
 }
 
+static ssize_t virtualize_returned_path_glibc(char* buf, ssize_t len, size_t bufsiz) {
+    if (len <= 0 || !buf || current_app_dir_len == 0) return len;
+
+    const char* matched_prefix = NULL;
+    size_t matched_prefix_len = 0;
+
+    // 1. Match current_app_dir (e.g. /data/user/10/com.termex or /data/data/com.termex)
+    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0 &&
+        (buf[current_app_dir_len] == '\0' || buf[current_app_dir_len] == '/')) {
+        matched_prefix = current_app_dir;
+        matched_prefix_len = current_app_dir_len;
+    }
+    // 2. Match /data/data/com.termex
+    else if ((size_t)len >= TARGET_LEN3 && strncmp(buf, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
+             (buf[TARGET_LEN3] == '\0' || buf[TARGET_LEN3] == '/')) {
+        matched_prefix = TARGET_PREFIX3;
+        matched_prefix_len = TARGET_LEN3;
+    }
+    // 3. Match /data/user/0/com.termex
+    else if ((size_t)len >= TARGET_LEN4 && strncmp(buf, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
+             (buf[TARGET_LEN4] == '\0' || buf[TARGET_LEN4] == '/')) {
+        matched_prefix = TARGET_PREFIX4;
+        matched_prefix_len = TARGET_LEN4;
+    }
+    // 4. Match /data/user/0/com.termux
+    else if ((size_t)len >= TARGET_LEN2 && strncmp(buf, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
+             (buf[TARGET_LEN2] == '\0' || buf[TARGET_LEN2] == '/')) {
+        matched_prefix = TARGET_PREFIX2;
+        matched_prefix_len = TARGET_LEN2;
+    }
+    // 5. Match /data/user/<id>/com.termux or /data/user/<id>/com.termex
+    else if (strncmp(buf, "/data/user/", 11) == 0) {
+        const char* after = buf + 11;
+        while (*after >= '0' && *after <= '9') after++;
+        if (*after == '/') {
+            if ((strncmp(after + 1, "com.termux", 10) == 0 && (after[11] == '/' || after[11] == '\0')) ||
+                (strncmp(after + 1, "com.termex", 10) == 0 && (after[11] == '/' || after[11] == '\0'))) {
+                matched_prefix = buf;
+                matched_prefix_len = (after + 11) - buf;
+            }
+        }
+    }
+
+    if (matched_prefix && matched_prefix_len > 0) {
+        const char* suffix = buf + matched_prefix_len;
+        char vpath[1024];
+        int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+        if (n > 0) {
+            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz - 1;
+            memcpy(buf, vpath, to_copy);
+            buf[to_copy] = '\0';
+            return (ssize_t)to_copy;
+        }
+    }
+    return len;
+}
+
 // Function pointer definitions
 typedef int (*orig_open_t)(const char*, int, ...);
 typedef int (*orig_openat_t)(int, const char*, int, ...);
@@ -159,6 +261,8 @@ typedef int (*orig_access_t)(const char*, int);
 typedef int (*orig_faccessat_t)(int, const char*, int, int);
 typedef ssize_t (*orig_readlink_t)(const char*, char*, size_t);
 typedef ssize_t (*orig_readlinkat_t)(int, const char*, char*, size_t);
+typedef char* (*orig_realpath_t)(const char*, char*);
+typedef char* (*orig_getcwd_t)(char*, size_t);
 typedef int (*orig_chdir_t)(const char*);
 typedef int (*orig_mkdir_t)(const char*, mode_t);
 typedef int (*orig_mkdirat_t)(int, const char*, mode_t);
@@ -181,6 +285,10 @@ typedef struct hostent* (*orig_gethostbyname_t)(const char*);
 typedef struct hostent* (*orig_gethostbyname2_t)(const char*, int);
 typedef int (*orig_gethostbyname_r_t)(const char*, struct hostent*, char*, size_t, struct hostent**, int*);
 typedef int (*orig_gethostbyname2_r_t)(const char*, int, struct hostent*, char*, size_t, struct hostent**, int*);
+typedef struct passwd* (*orig_getpwuid_t)(uid_t);
+typedef int (*orig_getpwuid_r_t)(uid_t, struct passwd*, char*, size_t, struct passwd**);
+typedef struct passwd* (*orig_getpwnam_t)(const char*);
+typedef int (*orig_getpwnam_r_t)(const char*, struct passwd*, char*, size_t, struct passwd**);
 
 int open(const char* path, int flags, ...) {
     static orig_open_t orig = NULL;
@@ -318,18 +426,67 @@ int faccessat(int dirfd, const char* path, int mode, int flags) {
     return orig(dirfd, redirect_path_glibc(path, buf, sizeof(buf)), mode, flags);
 }
 
+// dlopen
+typedef void* (*orig_dlopen_t)(const char*, int);
+void* dlopen(const char* filename, int flag) {
+    static orig_dlopen_t orig = NULL;
+    if (!orig) orig = (orig_dlopen_t)dlsym(RTLD_NEXT, "dlopen");
+    if (!filename) return orig ? orig(filename, flag) : NULL;
+    char buf[1024];
+    const char* rpath = redirect_path_glibc(filename, buf, sizeof(buf));
+    return orig ? orig(rpath, flag) : NULL;
+}
+
+// dladdr
+typedef int (*orig_dladdr_t)(const void*, Dl_info*);
+int dladdr(const void* addr, Dl_info* info) {
+    static orig_dladdr_t orig = NULL;
+    if (!orig) orig = (orig_dladdr_t)dlsym(RTLD_NEXT, "dladdr");
+    int ret = orig ? orig(addr, info) : 0;
+    if (ret && info && info->dli_fname && current_app_dir_len > 0) {
+        static __thread char vfname[1024];
+        size_t len = strlen(info->dli_fname);
+        if (len < sizeof(vfname)) {
+            memcpy(vfname, info->dli_fname, len + 1);
+            virtualize_returned_path_glibc(vfname, (ssize_t)len, sizeof(vfname));
+            info->dli_fname = vfname;
+        }
+    }
+    return ret;
+}
+
 ssize_t readlink(const char* path, char* out, size_t size) {
     static orig_readlink_t orig = NULL;
     if (!orig) orig = (orig_readlink_t)dlsym(RTLD_NEXT, "readlink");
     char buf[1024];
-    return orig(redirect_path_glibc(path, buf, sizeof(buf)), out, size);
+    ssize_t ret = orig(redirect_path_glibc(path, buf, sizeof(buf)), out, size);
+    if (ret > 0) {
+        ret = virtualize_returned_path_glibc(out, ret, size);
+    }
+    return ret;
 }
 
 ssize_t readlinkat(int dirfd, const char* path, char* out, size_t size) {
     static orig_readlinkat_t orig = NULL;
     if (!orig) orig = (orig_readlinkat_t)dlsym(RTLD_NEXT, "readlinkat");
     char buf[1024];
-    return orig(dirfd, redirect_path_glibc(path, buf, sizeof(buf)), out, size);
+    ssize_t ret = orig(dirfd, redirect_path_glibc(path, buf, sizeof(buf)), out, size);
+    if (ret > 0) {
+        ret = virtualize_returned_path_glibc(out, ret, size);
+    }
+    return ret;
+}
+
+char* realpath(const char* path, char* resolved_path) {
+    static orig_realpath_t orig = NULL;
+    if (!orig) orig = (orig_realpath_t)dlsym(RTLD_NEXT, "realpath");
+    char buf[1024];
+    char* ret = orig(redirect_path_glibc(path, buf, sizeof(buf)), resolved_path);
+    if (ret) {
+        size_t len = strlen(ret);
+        virtualize_returned_path_glibc(ret, (ssize_t)len, len + 128);
+    }
+    return ret;
 }
 
 int chdir(const char* path) {
@@ -337,6 +494,61 @@ int chdir(const char* path) {
     if (!orig) orig = (orig_chdir_t)dlsym(RTLD_NEXT, "chdir");
     char buf[1024];
     return orig(redirect_path_glibc(path, buf, sizeof(buf)));
+}
+
+char* getcwd(char* buf, size_t size) {
+    static orig_getcwd_t orig = NULL;
+    if (!orig) orig = (orig_getcwd_t)dlsym(RTLD_NEXT, "getcwd");
+    char* ret = orig(buf, size);
+    if (ret) {
+        size_t len = strlen(ret);
+        virtualize_returned_path_glibc(ret, (ssize_t)len, size > 0 ? size : (len + 128));
+    }
+    return ret;
+}
+
+struct passwd* getpwuid(uid_t uid) {
+    static orig_getpwuid_t orig = NULL;
+    if (!orig) orig = (orig_getpwuid_t)dlsym(RTLD_NEXT, "getpwuid");
+    struct passwd* pw = orig ? orig(uid) : NULL;
+    if (pw) {
+        pw->pw_dir = (char*)CANONICAL_HOME;
+        pw->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return pw;
+}
+
+int getpwuid_r(uid_t uid, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+    static orig_getpwuid_r_t orig = NULL;
+    if (!orig) orig = (orig_getpwuid_r_t)dlsym(RTLD_NEXT, "getpwuid_r");
+    int ret = orig ? orig(uid, pwd, buf, buflen, result) : -1;
+    if (ret == 0 && result && *result) {
+        (*result)->pw_dir = (char*)CANONICAL_HOME;
+        (*result)->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return ret;
+}
+
+struct passwd* getpwnam(const char* name) {
+    static orig_getpwnam_t orig = NULL;
+    if (!orig) orig = (orig_getpwnam_t)dlsym(RTLD_NEXT, "getpwnam");
+    struct passwd* pw = orig ? orig(name) : NULL;
+    if (pw) {
+        pw->pw_dir = (char*)CANONICAL_HOME;
+        pw->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return pw;
+}
+
+int getpwnam_r(const char* name, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+    static orig_getpwnam_r_t orig = NULL;
+    if (!orig) orig = (orig_getpwnam_r_t)dlsym(RTLD_NEXT, "getpwnam_r");
+    int ret = orig ? orig(name, pwd, buf, buflen, result) : -1;
+    if (ret == 0 && result && *result) {
+        (*result)->pw_dir = (char*)CANONICAL_HOME;
+        (*result)->pw_shell = (char*)CANONICAL_SHELL;
+    }
+    return ret;
 }
 
 int mkdir(const char* path, mode_t mode) {
@@ -409,18 +621,399 @@ DIR* opendir(const char* path) {
     return orig(redirect_path_glibc(path, buf, sizeof(buf)));
 }
 
+static int check_is_glibc_binary_glibc(const char* path) {
+    if (!path) return 0;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    unsigned char e_ident[EI_NIDENT];
+    if (read(fd, e_ident, sizeof(e_ident)) != (ssize_t)sizeof(e_ident)) {
+        close(fd);
+        return 0;
+    }
+    if (memcmp(e_ident, ELFMAG, SELFMAG) != 0) {
+        close(fd);
+        return 0;
+    }
+    int is_glibc = 0;
+    if (e_ident[EI_CLASS] == ELFCLASS64) {
+        Elf64_Ehdr ehdr;
+        lseek(fd, 0, SEEK_SET);
+        if (read(fd, &ehdr, sizeof(ehdr)) == (ssize_t)sizeof(ehdr) && ehdr.e_phoff > 0 && ehdr.e_phnum > 0) {
+            for (int i = 0; i < ehdr.e_phnum && i < 64; i++) {
+                Elf64_Phdr phdr;
+                lseek(fd, ehdr.e_phoff + i * sizeof(Elf64_Phdr), SEEK_SET);
+                if (read(fd, &phdr, sizeof(phdr)) != (ssize_t)sizeof(phdr)) break;
+                if (phdr.p_type == PT_INTERP && phdr.p_filesz > 0 && phdr.p_filesz < 512) {
+                    char interp[512] = {0};
+                    lseek(fd, phdr.p_offset, SEEK_SET);
+                    if (read(fd, interp, phdr.p_filesz) > 0) {
+                        interp[sizeof(interp) - 1] = '\0';
+                        if (strstr(interp, "ld-linux") != NULL || strstr(interp, "glibc") != NULL) {
+                            is_glibc = 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    close(fd);
+    return is_glibc;
+}
+
+static const char* resolve_in_path_glibc(const char* file, char* buffer, size_t bufsize) {
+    if (!file || !buffer || bufsize == 0) return file;
+    if (strchr(file, '/')) {
+        return redirect_path_glibc(file, buffer, bufsize);
+    }
+    const char* path_env = getenv("PATH");
+    if (!path_env || path_env[0] == '\0') {
+        path_env = "/data/data/com.termux/files/usr/bin:/bin:/usr/bin";
+    }
+    char path_copy[2048];
+    strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+
+    char* token = strtok(path_copy, ":");
+    while (token) {
+        char candidate[1024];
+        snprintf(candidate, sizeof(candidate), "%s/%s", token, file);
+        char redirected_cand[1024];
+        const char* rcand = redirect_path_glibc(candidate, redirected_cand, sizeof(redirected_cand));
+        if (access(rcand, X_OK) == 0) {
+            strncpy(buffer, rcand, bufsize - 1);
+            buffer[bufsize - 1] = '\0';
+            return buffer;
+        }
+        token = strtok(NULL, ":");
+    }
+    return redirect_path_glibc(file, buffer, bufsize);
+}
+
+static char** ensure_env_glibc(char* const envp[], int is_glibc_child) {
+    int count = 0;
+    int preload_idx = -1, libpath_idx = -1, appdir_idx = -1;
+    int prefix_idx = -1, home_idx = -1, tmpdir_idx = -1, path_idx = -1;
+    while (envp && envp[count]) {
+        if (strncmp(envp[count], "LD_PRELOAD=", 11) == 0) preload_idx = count;
+        if (strncmp(envp[count], "LD_LIBRARY_PATH=", 16) == 0) libpath_idx = count;
+        if (strncmp(envp[count], "TERMEX_REAL_APP_DIR=", 20) == 0) appdir_idx = count;
+        if (strncmp(envp[count], "PREFIX=", 7) == 0) prefix_idx = count;
+        if (strncmp(envp[count], "HOME=", 5) == 0) home_idx = count;
+        if (strncmp(envp[count], "TMPDIR=", 7) == 0) tmpdir_idx = count;
+        if (strncmp(envp[count], "PATH=", 5) == 0) path_idx = count;
+        count++;
+    }
+
+    char bionic_preload[512] = {0};
+    char bionic_libpath[512] = {0};
+    if (current_app_dir[0]) {
+        snprintf(bionic_preload, sizeof(bionic_preload), "%s/files/usr/lib/libtermex-redirect.so", current_app_dir);
+        snprintf(bionic_libpath, sizeof(bionic_libpath), "%s/files/usr/lib", current_app_dir);
+    }
+
+    char** new_envp = malloc((count + 12) * sizeof(char*));
+    if (!new_envp) return (char**)envp;
+
+    int new_count = 0;
+    for (int i = 0; i < count; i++) {
+        if (is_glibc_child) {
+            if (i == preload_idx) {
+                if (strstr(envp[i], "libtermex-redirect.so")) continue;
+            }
+        } else {
+            if (i == preload_idx || i == libpath_idx) continue;
+        }
+        if (i == prefix_idx || i == home_idx || i == tmpdir_idx || i == appdir_idx) continue;
+        new_envp[new_count++] = envp[i];
+    }
+
+    if (!is_glibc_child && bionic_preload[0]) {
+        char* pl = malloc(1024);
+        if (pl) {
+            if (preload_idx >= 0 && envp[preload_idx] && !strstr(envp[preload_idx], "libtermex-redirect.so")) {
+                snprintf(pl, 1024, "LD_PRELOAD=%s %s", bionic_preload, envp[preload_idx] + 11);
+            } else {
+                snprintf(pl, 1024, "LD_PRELOAD=%s", bionic_preload);
+            }
+            new_envp[new_count++] = pl;
+        }
+        char* lp = malloc(1024);
+        if (lp) {
+            if (libpath_idx >= 0 && envp[libpath_idx]) {
+                snprintf(lp, 1024, "LD_LIBRARY_PATH=%s:%s", bionic_libpath, envp[libpath_idx] + 16);
+            } else {
+                snprintf(lp, 1024, "LD_LIBRARY_PATH=%s", bionic_libpath);
+            }
+            new_envp[new_count++] = lp;
+        }
+    }
+
+    if (current_app_dir[0]) {
+        char* ad = malloc(600);
+        if (ad) {
+            snprintf(ad, 600, "TERMEX_REAL_APP_DIR=%s", current_app_dir);
+            new_envp[new_count++] = ad;
+        }
+    }
+
+    new_envp[new_count++] = "PREFIX=/data/data/com.termux/files/usr";
+    new_envp[new_count++] = "HOME=/data/data/com.termux/files/home";
+    new_envp[new_count++] = "TMPDIR=/data/data/com.termux/files/usr/tmp";
+
+    if (path_idx < 0) {
+        new_envp[new_count++] = "PATH=/data/data/com.termux/files/usr/bin:/data/data/com.termux/files/usr/bin/applets:/bin:/system/bin";
+    }
+
+    new_envp[new_count] = NULL;
+    return new_envp;
+}
+
+static int handle_shebang_exec_glibc(const char* rpath, char* const argv[], char* const envp[], orig_execve_t orig_func) {
+    if (!rpath) return -1;
+
+    int fd = open(rpath, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        char header[256];
+        ssize_t n = read(fd, header, sizeof(header) - 1);
+        close(fd);
+        if (n > 2 && header[0] == '#' && header[1] == '!') {
+            header[n] = '\0';
+            char* nl = strchr(header, '\n');
+            if (nl) *nl = '\0';
+            char* cr = strchr(header, '\r');
+            if (cr) *cr = '\0';
+
+            char* interp = header + 2;
+            while (*interp == ' ' || *interp == '\t') interp++;
+            if (*interp != '\0') {
+                char* interp_end = interp;
+                while (*interp_end && *interp_end != ' ' && *interp_end != '\t') interp_end++;
+
+                char* interp_arg = NULL;
+                if (*interp_end != '\0') {
+                    *interp_end = '\0';
+                    interp_arg = interp_end + 1;
+                    while (*interp_arg == ' ' || *interp_arg == '\t') interp_arg++;
+                    if (*interp_arg == '\0') interp_arg = NULL;
+                }
+
+                char resolved_interp[1024];
+                const char* rinterp = NULL;
+                if (strcmp(interp, "/usr/bin/env") == 0 && interp_arg) {
+                    char* next_space = strchr(interp_arg, ' ');
+                    if (next_space) *next_space = '\0';
+                    rinterp = resolve_in_path_glibc(interp_arg, resolved_interp, sizeof(resolved_interp));
+                    interp_arg = NULL;
+                } else {
+                    rinterp = redirect_path_glibc(interp, resolved_interp, sizeof(resolved_interp));
+                }
+
+                if (rinterp && access(rinterp, X_OK) == 0) {
+                    int interp_is_glibc = check_is_glibc_binary_glibc(rinterp);
+                    char** safe_envp = ensure_env_glibc(envp ? envp : environ, interp_is_glibc);
+
+                    int argc = 0;
+                    while (argv && argv[argc]) argc++;
+
+                    int extra = (interp_arg ? 3 : 2);
+                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    if (new_argv) {
+                        int idx = 0;
+                        new_argv[idx++] = (char*)rinterp;
+                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        new_argv[idx++] = (char*)rpath;
+                        for (int i = 1; i < argc; i++) new_argv[idx++] = argv[i];
+                        new_argv[argc + extra - 1] = NULL;
+
+                        int ret = orig_func(rinterp, new_argv, safe_envp);
+                        free(new_argv);
+                        return ret;
+                    }
+                }
+            }
+        }
+    }
+
+    int is_glibc = check_is_glibc_binary_glibc(rpath);
+    char** safe_envp = ensure_env_glibc(envp ? envp : environ, is_glibc);
+    return orig_func(rpath, argv, safe_envp);
+}
+
 int execve(const char* path, char* const argv[], char* const envp[]) {
     static orig_execve_t orig = NULL;
     if (!orig) orig = (orig_execve_t)dlsym(RTLD_NEXT, "execve");
     char buf[1024];
-    return orig(redirect_path_glibc(path, buf, sizeof(buf)), argv, envp);
+    const char* rpath = redirect_path_glibc(path, buf, sizeof(buf));
+    return handle_shebang_exec_glibc(rpath, argv, envp, orig);
 }
 
 int execvpe(const char* file, char* const argv[], char* const envp[]) {
-    static orig_execvpe_t orig = NULL;
-    if (!orig) orig = (orig_execvpe_t)dlsym(RTLD_NEXT, "execvpe");
+    static orig_execve_t orig = NULL;
+    if (!orig) orig = (orig_execve_t)dlsym(RTLD_NEXT, "execve");
     char buf[1024];
-    return orig(redirect_path_glibc(file, buf, sizeof(buf)), argv, envp);
+    const char* rpath = resolve_in_path_glibc(file, buf, sizeof(buf));
+    return handle_shebang_exec_glibc(rpath, argv, envp, orig);
+}
+
+int execvp(const char* file, char* const argv[]) {
+    return execvpe(file, argv, environ);
+}
+
+int execv(const char* pathname, char* const argv[]) {
+    return execve(pathname, argv, environ);
+}
+
+int execl(const char* path, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execv(path, argv);
+    free(argv);
+    return ret;
+}
+
+int execlp(const char* file, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execvp(file, argv);
+    free(argv);
+    return ret;
+}
+
+int execle(const char* path, const char* arg0, ...) {
+    va_list args;
+    va_start(args, arg0);
+    int count = 1;
+    while (va_arg(args, const char*) != NULL) count++;
+    char* const* envp = va_arg(args, char* const*);
+    va_end(args);
+
+    char** argv = malloc((count + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)arg0;
+    va_start(args, arg0);
+    for (int i = 1; i < count; i++) {
+        argv[i] = va_arg(args, char*);
+    }
+    argv[count] = NULL;
+    va_end(args);
+
+    int ret = execve(path, argv, envp);
+    free(argv);
+    return ret;
+}
+
+// posix_spawn
+typedef int (*orig_posix_spawn_t)(pid_t*, const char*, const posix_spawn_file_actions_t*, const posix_spawnattr_t*, char* const[], char* const[]);
+int posix_spawn(pid_t* pid, const char* path, const posix_spawn_file_actions_t* file_actions, const posix_spawnattr_t* attrp, char* const argv[], char* const envp[]) {
+    static orig_posix_spawn_t o_posix_spawn = NULL;
+    if (!o_posix_spawn) o_posix_spawn = (orig_posix_spawn_t)dlsym(RTLD_NEXT, "posix_spawn");
+    if (!o_posix_spawn) return ENOSYS;
+
+    char buf[1024];
+    const char* rpath = redirect_path_glibc(path, buf, sizeof(buf));
+
+    int fd = open(rpath, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        char header[256];
+        ssize_t n = read(fd, header, sizeof(header) - 1);
+        close(fd);
+        if (n > 2 && header[0] == '#' && header[1] == '!') {
+            header[n] = '\0';
+            char* nl = strchr(header, '\n');
+            if (nl) *nl = '\0';
+            char* cr = strchr(header, '\r');
+            if (cr) *cr = '\0';
+
+            char* interp = header + 2;
+            while (*interp == ' ' || *interp == '\t') interp++;
+            if (*interp != '\0') {
+                char* interp_end = interp;
+                while (*interp_end && *interp_end != ' ' && *interp_end != '\t') interp_end++;
+
+                char* interp_arg = NULL;
+                if (*interp_end != '\0') {
+                    *interp_end = '\0';
+                    interp_arg = interp_end + 1;
+                    while (*interp_arg == ' ' || *interp_arg == '\t') interp_arg++;
+                    if (*interp_arg == '\0') interp_arg = NULL;
+                }
+
+                char resolved_interp[1024];
+                const char* rinterp = NULL;
+                if (strcmp(interp, "/usr/bin/env") == 0 && interp_arg) {
+                    char* next_space = strchr(interp_arg, ' ');
+                    if (next_space) *next_space = '\0';
+                    rinterp = resolve_in_path_glibc(interp_arg, resolved_interp, sizeof(resolved_interp));
+                    interp_arg = NULL;
+                } else {
+                    rinterp = redirect_path_glibc(interp, resolved_interp, sizeof(resolved_interp));
+                }
+
+                if (rinterp && access(rinterp, X_OK) == 0) {
+                    int interp_is_glibc = check_is_glibc_binary_glibc(rinterp);
+                    char** safe_envp = ensure_env_glibc(envp ? envp : environ, interp_is_glibc);
+
+                    int argc = 0;
+                    while (argv && argv[argc]) argc++;
+
+                    int extra = (interp_arg ? 3 : 2);
+                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    if (new_argv) {
+                        int idx = 0;
+                        new_argv[idx++] = (char*)rinterp;
+                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        new_argv[idx++] = (char*)rpath;
+                        for (int i = 1; i < argc; i++) new_argv[idx++] = argv[i];
+                        new_argv[argc + extra - 1] = NULL;
+
+                        int ret = o_posix_spawn(pid, rinterp, file_actions, attrp, new_argv, safe_envp);
+                        free(new_argv);
+                        return ret;
+                    }
+                }
+            }
+        }
+    }
+
+    int is_glibc = check_is_glibc_binary_glibc(rpath);
+    char** safe_envp = ensure_env_glibc(envp ? envp : environ, is_glibc);
+    return o_posix_spawn(pid, rpath, file_actions, attrp, argv, safe_envp);
+}
+
+// posix_spawnp
+int posix_spawnp(pid_t* pid, const char* file, const posix_spawn_file_actions_t* file_actions, const posix_spawnattr_t* attrp, char* const argv[], char* const envp[]) {
+    char buf[1024];
+    const char* rpath = resolve_in_path_glibc(file, buf, sizeof(buf));
+    return posix_spawn(pid, rpath, file_actions, attrp, argv, envp);
 }
 
 int bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
