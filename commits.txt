@@ -391,3 +391,31 @@ DESCRIPTION:
      - T10 (Cross-runtime glibc -> Bionic Python -> Bionic Java): PASS, 0 leaks.
      - Total: 10/10 passed, 0 failures, 0 leaks.
 
+
+
+
+
+
+COMMIT 31: [e331d95] - 2026-11-12 23:55:00 +0530
+MESSAGE: "fix: Robust glibc asset updating, Go direct-syscall environment resolution, and glibc stat hooks, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Resolve interactive agy launch crash ('mkdir /data/data/com.termux: file exists') and asset installer failure out-of-the-box:
+  1. TermuxInstaller Asset Extraction Fix:
+     - Replaced AssetFileDescriptor openFd() in installGlibcRedirectLibraryIfNeeded() with direct InputStream reading via ByteArrayOutputStream.
+     - Eliminates silent FileNotFoundException caused by AAPT/Gradle asset compression.
+     - Added content byte-comparison to ensure libtermex-redirect-glibc.so is reliably updated whenever the APK asset changes, without requiring manual adb intervention.
+     - Configured androidResources { noCompress "so" } in app/build.gradle.
+  2. Glibc Stat & Open Hooks Interposition (__xstat, __lxstat, __fxstatat, __open):
+     - Added interposition for __xstat, __xstat64, __lxstat, __lxstat64, __fxstatat, __fxstatat64, __open, and __open64 in termex-redirect-glibc.c.
+     - Glibc binaries (such as agy.va39 and Go runtimes) call __xstat / __lxstat rather than generic stat, allowing path redirection to properly intercept them.
+  3. Go Direct-Syscall Environment Alignment:
+     - Go standard library (runtime, os, syscall) bypasses libc on Linux/ARM64 and emits raw kernel syscalls (svc #0) for directory creation (SYS_mkdirat) and file operations.
+     - In ensure_env() (termex-redirect.c) and ensure_env_glibc() (termex-redirect-glibc.c), when spawning glibc child processes (such as agy.va39), dynamically pass physical HOME ($REAL_APP_DIR/files/home), PREFIX, and TMPDIR paths.
+     - Eliminates raw kernel syscalls targeting the inaccessible /data/data/com.termux directory.
+     - Subprocesses spawned by glibc binaries bridge back to canonical /data/data/com.termux with libtermex-redirect.so preloaded.
+  4. Live Device Verification:
+     - Successfully updated libtermex-redirect-glibc.so to 40,256 bytes and libtermex-redirect.so to 77,048 bytes cleanly upon APK installation.
+     - Verified agy --version (1.3.0) and interactive agy initialization (Language server listening on random ports, cli.log created, conversation_summaries.db initialized).
+
+

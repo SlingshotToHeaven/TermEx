@@ -1517,11 +1517,29 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
                 new_env[write_pos++] = envp[i];
             }
         } else if (strncmp(envp[i], "PREFIX=", 7) == 0) {
-            new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+            if (is_glibc && cur_app_dir[0]) {
+                char buf[1024];
+                snprintf(buf, sizeof(buf), "PREFIX=%s/files/usr", cur_app_dir);
+                new_env[write_pos++] = strdup(buf);
+            } else {
+                new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+            }
         } else if (strncmp(envp[i], "HOME=", 5) == 0) {
-            new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+            if (is_glibc && cur_app_dir[0]) {
+                char buf[1024];
+                snprintf(buf, sizeof(buf), "HOME=%s/files/home", cur_app_dir);
+                new_env[write_pos++] = strdup(buf);
+            } else {
+                new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+            }
         } else if (strncmp(envp[i], "TMPDIR=", 7) == 0) {
-            new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
+            if (is_glibc && cur_app_dir[0]) {
+                char buf[1024];
+                snprintf(buf, sizeof(buf), "TMPDIR=%s/files/usr/tmp", cur_app_dir);
+                new_env[write_pos++] = strdup(buf);
+            } else {
+                new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
+            }
         } else if (strncmp(envp[i], "PWD=", 4) == 0) {
             char vpwd[1024];
             const char* val = envp[i] + 4;
@@ -1591,13 +1609,31 @@ static char** ensure_env(char* const envp[], int is_glibc, int is_system) {
         new_env[write_pos++] = strdup("TERMUX_VERSION=0.118.0");
     }
     if (prefix_idx < 0) {
-        new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+        if (is_glibc && cur_app_dir[0]) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "PREFIX=%s/files/usr", cur_app_dir);
+            new_env[write_pos++] = strdup(buf);
+        } else {
+            new_env[write_pos++] = strdup("PREFIX=/data/data/com.termux/files/usr");
+        }
     }
     if (home_idx < 0) {
-        new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+        if (is_glibc && cur_app_dir[0]) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "HOME=%s/files/home", cur_app_dir);
+            new_env[write_pos++] = strdup(buf);
+        } else {
+            new_env[write_pos++] = strdup("HOME=/data/data/com.termux/files/home");
+        }
     }
     if (tmpdir_idx < 0) {
-        new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
+        if (is_glibc && cur_app_dir[0]) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "TMPDIR=%s/files/usr/tmp", cur_app_dir);
+            new_env[write_pos++] = strdup(buf);
+        } else {
+            new_env[write_pos++] = strdup("TMPDIR=/data/data/com.termux/files/usr/tmp");
+        }
     }
     new_env[write_pos] = NULL;
     return new_env;

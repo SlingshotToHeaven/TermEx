@@ -25,6 +25,7 @@ import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -33,6 +34,7 @@ import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -463,26 +465,54 @@ final class TermuxInstaller {
             File targetDir = new File(glibcDir, "lib");
             ensureDirectoryExists(targetDir);
             File targetLib = new File(targetDir, "libtermex-redirect-glibc.so");
-            boolean needInstall = !targetLib.exists();
+
+            // Read asset bytes directly from APK stream (handles both compressed and uncompressed assets reliably)
+            byte[] assetBytes;
+            try (InputStream is = context.getAssets().open("libtermex-redirect-glibc.so")) {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int r;
+                while ((r = is.read(buf)) != -1) {
+                    baos.write(buf, 0, r);
+                }
+                assetBytes = baos.toByteArray();
+            }
+
+            if (assetBytes == null || assetBytes.length == 0) return;
+
+            boolean needInstall = !targetLib.exists() || targetLib.length() != assetBytes.length;
             if (!needInstall) {
-                try (android.content.res.AssetFileDescriptor afd = context.getAssets().openFd("libtermex-redirect-glibc.so")) {
-                    if (afd != null && afd.getLength() > 0 && afd.getLength() != targetLib.length()) {
+                // If length matches, check content to ensure the binary is identical
+                byte[] fileBytes = new byte[assetBytes.length];
+                try (FileInputStream fis = new FileInputStream(targetLib)) {
+                    int readTotal = 0;
+                    while (readTotal < fileBytes.length) {
+                        int r = fis.read(fileBytes, readTotal, fileBytes.length - readTotal);
+                        if (r <= 0) break;
+                        readTotal += r;
+                    }
+                    if (readTotal != fileBytes.length || !Arrays.equals(fileBytes, assetBytes)) {
                         needInstall = true;
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    needInstall = true;
+                }
             }
+
             if (needInstall) {
-                try (InputStream is = context.getAssets().open("libtermex-redirect-glibc.so");
-                     FileOutputStream fos = new FileOutputStream(targetLib)) {
-                    byte[] buf = new byte[8192];
-                    int r;
-                    while ((r = is.read(buf)) > 0) {
-                        fos.write(buf, 0, r);
-                    }
+                // Write via temporary file and rename to avoid ETXTBSY on running binaries
+                File tmpLib = new File(targetDir, "libtermex-redirect-glibc.so.tmp");
+                try (FileOutputStream fos = new FileOutputStream(tmpLib)) {
+                    fos.write(assetBytes);
+                    fos.flush();
                 }
                 //noinspection OctalInteger
-                Os.chmod(targetLib.getAbsolutePath(), 0755);
-                Logger.logInfo(LOG_TAG, "Installed libtermex-redirect-glibc.so into " + targetLib.getAbsolutePath());
+                Os.chmod(tmpLib.getAbsolutePath(), 0755);
+                if (!tmpLib.renameTo(targetLib)) {
+                    targetLib.delete();
+                    tmpLib.renameTo(targetLib);
+                }
+                Logger.logInfo(LOG_TAG, "Installed libtermex-redirect-glibc.so (" + assetBytes.length + " bytes) into " + targetLib.getAbsolutePath());
             }
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Failed to install libtermex-redirect-glibc.so: " + e.getMessage());

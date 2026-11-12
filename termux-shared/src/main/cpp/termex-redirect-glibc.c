@@ -422,6 +422,90 @@ int lstat64(const char* path, struct stat64* st) {
     return orig(redirect_path_glibc(path, buf, sizeof(buf)), st);
 }
 
+typedef int (*orig___xstat_t)(int, const char*, struct stat*);
+int __xstat(int ver, const char* path, struct stat* st) {
+    static orig___xstat_t orig = NULL;
+    if (!orig) orig = (orig___xstat_t)dlsym(RTLD_NEXT, "__xstat");
+    char buf[1024];
+    return orig(ver, redirect_path_glibc(path, buf, sizeof(buf)), st);
+}
+
+typedef int (*orig___xstat64_t)(int, const char*, struct stat64*);
+int __xstat64(int ver, const char* path, struct stat64* st) {
+    static orig___xstat64_t orig = NULL;
+    if (!orig) orig = (orig___xstat64_t)dlsym(RTLD_NEXT, "__xstat64");
+    if (!orig) orig = (orig___xstat64_t)dlsym(RTLD_NEXT, "__xstat");
+    char buf[1024];
+    return orig(ver, redirect_path_glibc(path, buf, sizeof(buf)), st);
+}
+
+typedef int (*orig___lxstat_t)(int, const char*, struct stat*);
+int __lxstat(int ver, const char* path, struct stat* st) {
+    static orig___lxstat_t orig = NULL;
+    if (!orig) orig = (orig___lxstat_t)dlsym(RTLD_NEXT, "__lxstat");
+    char buf[1024];
+    return orig(ver, redirect_path_glibc(path, buf, sizeof(buf)), st);
+}
+
+typedef int (*orig___lxstat64_t)(int, const char*, struct stat64*);
+int __lxstat64(int ver, const char* path, struct stat64* st) {
+    static orig___lxstat64_t orig = NULL;
+    if (!orig) orig = (orig___lxstat64_t)dlsym(RTLD_NEXT, "__lxstat64");
+    if (!orig) orig = (orig___lxstat64_t)dlsym(RTLD_NEXT, "__lxstat");
+    char buf[1024];
+    return orig(ver, redirect_path_glibc(path, buf, sizeof(buf)), st);
+}
+
+typedef int (*orig___fxstatat_t)(int, int, const char*, struct stat*, int);
+int __fxstatat(int ver, int dirfd, const char* path, struct stat* st, int flags) {
+    static orig___fxstatat_t orig = NULL;
+    if (!orig) orig = (orig___fxstatat_t)dlsym(RTLD_NEXT, "__fxstatat");
+    char buf[1024];
+    return orig(ver, dirfd, redirect_path_glibc(path, buf, sizeof(buf)), st, flags);
+}
+
+typedef int (*orig___fxstatat64_t)(int, int, const char*, struct stat64*, int);
+int __fxstatat64(int ver, int dirfd, const char* path, struct stat64* st, int flags) {
+    static orig___fxstatat64_t orig = NULL;
+    if (!orig) orig = (orig___fxstatat64_t)dlsym(RTLD_NEXT, "__fxstatat64");
+    if (!orig) orig = (orig___fxstatat64_t)dlsym(RTLD_NEXT, "__fxstatat");
+    char buf[1024];
+    return orig(ver, dirfd, redirect_path_glibc(path, buf, sizeof(buf)), st, flags);
+}
+
+int __open(const char* path, int flags, ...) {
+    static orig_open_t orig = NULL;
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "__open");
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    char buf[1024];
+    const char* rpath = redirect_path_glibc(path, buf, sizeof(buf));
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        return orig(rpath, flags, mode);
+    }
+    return orig(rpath, flags);
+}
+
+int __open64(const char* path, int flags, ...) {
+    static orig_open_t orig = NULL;
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "__open64");
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open64");
+    if (!orig) orig = (orig_open_t)dlsym(RTLD_NEXT, "open");
+    char buf[1024];
+    const char* rpath = redirect_path_glibc(path, buf, sizeof(buf));
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode_t mode = va_arg(ap, mode_t);
+        va_end(ap);
+        return orig(rpath, flags, mode);
+    }
+    return orig(rpath, flags);
+}
+
 int access(const char* path, int mode) {
     static orig_access_t orig = NULL;
     if (!orig) orig = (orig_access_t)dlsym(RTLD_NEXT, "access");
@@ -779,9 +863,27 @@ static char** ensure_env_glibc(char* const envp[], int is_glibc_child) {
         }
     }
 
-    new_envp[new_count++] = "PREFIX=/data/data/com.termux/files/usr";
-    new_envp[new_count++] = "HOME=/data/data/com.termux/files/home";
-    new_envp[new_count++] = "TMPDIR=/data/data/com.termux/files/usr/tmp";
+    if (is_glibc_child && current_app_dir[0]) {
+        char* pr = malloc(600);
+        if (pr) {
+            snprintf(pr, 600, "PREFIX=%s/files/usr", current_app_dir);
+            new_envp[new_count++] = pr;
+        }
+        char* hm = malloc(600);
+        if (hm) {
+            snprintf(hm, 600, "HOME=%s/files/home", current_app_dir);
+            new_envp[new_count++] = hm;
+        }
+        char* tm = malloc(600);
+        if (tm) {
+            snprintf(tm, 600, "TMPDIR=%s/files/usr/tmp", current_app_dir);
+            new_envp[new_count++] = tm;
+        }
+    } else {
+        new_envp[new_count++] = "PREFIX=/data/data/com.termux/files/usr";
+        new_envp[new_count++] = "HOME=/data/data/com.termux/files/home";
+        new_envp[new_count++] = "TMPDIR=/data/data/com.termux/files/usr/tmp";
+    }
 
     if (path_idx < 0) {
         new_envp[new_count++] = "PATH=/data/data/com.termux/files/usr/bin:/data/data/com.termux/files/usr/bin/applets:/bin:/system/bin";
