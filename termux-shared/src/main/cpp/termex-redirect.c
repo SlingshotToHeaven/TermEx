@@ -1044,6 +1044,136 @@ int bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
     return orig(sockfd, addr, addrlen);
 }
 
+// sendto
+typedef ssize_t (*orig_sendto_t)(int, const void*, size_t, int, const struct sockaddr*, socklen_t);
+ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr, socklen_t addrlen) {
+    static orig_sendto_t orig = NULL;
+    if (!orig) orig = (orig_sendto_t)dlsym(RTLD_NEXT, "sendto");
+    if (dest_addr && dest_addr->sa_family == AF_UNIX && addrlen > (socklen_t)sizeof(sa_family_t)) {
+        const struct sockaddr_un* un = (const struct sockaddr_un*)dest_addr;
+        if (un->sun_path[0] != '\0') {
+            char r_buf[1024];
+            const char* rpath = redirect_path(un->sun_path, r_buf, sizeof(r_buf));
+            if (rpath != un->sun_path) {
+                struct sockaddr_un new_un;
+                memset(&new_un, 0, sizeof(new_un));
+                new_un.sun_family = AF_UNIX;
+                strncpy(new_un.sun_path, rpath, sizeof(new_un.sun_path) - 1);
+                socklen_t new_len = sizeof(sa_family_t) + strlen(new_un.sun_path) + 1;
+                return orig(sockfd, buf, len, flags, (const struct sockaddr*)&new_un, new_len);
+            }
+        }
+    }
+    return orig(sockfd, buf, len, flags, dest_addr, addrlen);
+}
+
+// sendmsg
+typedef ssize_t (*orig_sendmsg_t)(int, const struct msghdr*, int);
+ssize_t sendmsg(int sockfd, const struct msghdr* msg, int flags) {
+    static orig_sendmsg_t orig = NULL;
+    if (!orig) orig = (orig_sendmsg_t)dlsym(RTLD_NEXT, "sendmsg");
+    if (msg && msg->msg_name && msg->msg_namelen > (socklen_t)sizeof(sa_family_t)) {
+        const struct sockaddr* addr = (const struct sockaddr*)msg->msg_name;
+        if (addr->sa_family == AF_UNIX) {
+            const struct sockaddr_un* un = (const struct sockaddr_un*)addr;
+            if (un->sun_path[0] != '\0') {
+                char r_buf[1024];
+                const char* rpath = redirect_path(un->sun_path, r_buf, sizeof(r_buf));
+                if (rpath != un->sun_path) {
+                    struct sockaddr_un new_un;
+                    memset(&new_un, 0, sizeof(new_un));
+                    new_un.sun_family = AF_UNIX;
+                    strncpy(new_un.sun_path, rpath, sizeof(new_un.sun_path) - 1);
+                    struct msghdr new_msg = *msg;
+                    new_msg.msg_name = &new_un;
+                    new_msg.msg_namelen = sizeof(sa_family_t) + strlen(new_un.sun_path) + 1;
+                    return orig(sockfd, &new_msg, flags);
+                }
+            }
+        }
+    }
+    return orig(sockfd, msg, flags);
+}
+
+// getsockname
+typedef int (*orig_getsockname_t)(int, struct sockaddr*, socklen_t*);
+int getsockname(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
+    static orig_getsockname_t orig = NULL;
+    if (!orig) orig = (orig_getsockname_t)dlsym(RTLD_NEXT, "getsockname");
+    int ret = orig(sockfd, addr, addrlen);
+    if (ret == 0 && addr && addr->sa_family == AF_UNIX && addrlen && *addrlen > (socklen_t)sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// getpeername
+typedef int (*orig_getpeername_t)(int, struct sockaddr*, socklen_t*);
+int getpeername(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
+    static orig_getpeername_t orig = NULL;
+    if (!orig) orig = (orig_getpeername_t)dlsym(RTLD_NEXT, "getpeername");
+    int ret = orig(sockfd, addr, addrlen);
+    if (ret == 0 && addr && addr->sa_family == AF_UNIX && addrlen && *addrlen > (socklen_t)sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// recvfrom
+typedef ssize_t (*orig_recvfrom_t)(int, void*, size_t, int, struct sockaddr*, socklen_t*);
+ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen) {
+    static orig_recvfrom_t orig = NULL;
+    if (!orig) orig = (orig_recvfrom_t)dlsym(RTLD_NEXT, "recvfrom");
+    ssize_t ret = orig(sockfd, buf, len, flags, src_addr, addrlen);
+    if (ret >= 0 && src_addr && src_addr->sa_family == AF_UNIX && addrlen && *addrlen > (socklen_t)sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)src_addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// recvmsg
+typedef ssize_t (*orig_recvmsg_t)(int, struct msghdr*, int);
+ssize_t recvmsg(int sockfd, struct msghdr* msg, int flags) {
+    static orig_recvmsg_t orig = NULL;
+    if (!orig) orig = (orig_recvmsg_t)dlsym(RTLD_NEXT, "recvmsg");
+    ssize_t ret = orig(sockfd, msg, flags);
+    if (ret >= 0 && msg && msg->msg_name && msg->msg_namelen > (socklen_t)sizeof(sa_family_t)) {
+        struct sockaddr* addr = (struct sockaddr*)msg->msg_name;
+        if (addr->sa_family == AF_UNIX) {
+            struct sockaddr_un* un = (struct sockaddr_un*)addr;
+            if (un->sun_path[0] != '\0') {
+                ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+                ssize_t vlen = virtualize_returned_path(un->sun_path, cur_len, sizeof(un->sun_path));
+                if (vlen > 0) {
+                    msg->msg_namelen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+                }
+            }
+        }
+    }
+    return ret;
+}
+
 // symlinkat
 typedef int (*orig_symlinkat_t)(const char*, int, const char*);
 int symlinkat(const char* target, int newdirfd, const char* linkpath) {

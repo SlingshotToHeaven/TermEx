@@ -1324,6 +1324,133 @@ int connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {
     return orig(sockfd, addr, addrlen);
 }
 
+// sendto
+typedef ssize_t (*orig_sendto_t)(int, const void*, size_t, int, const struct sockaddr*, socklen_t);
+ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr, socklen_t addrlen) {
+    static orig_sendto_t orig = NULL;
+    if (!orig) orig = (orig_sendto_t)dlsym(RTLD_NEXT, "sendto");
+    if (dest_addr && dest_addr->sa_family == AF_UNIX && addrlen > sizeof(sa_family_t)) {
+        struct sockaddr_un un;
+        memcpy(&un, dest_addr, addrlen < sizeof(un) ? addrlen : sizeof(un));
+        if (un.sun_path[0] != '\0') {
+            char r_buf[1024];
+            const char* r = redirect_path_glibc(un.sun_path, r_buf, sizeof(r_buf));
+            if (r != un.sun_path) {
+                strncpy(un.sun_path, r, sizeof(un.sun_path) - 1);
+                un.sun_path[sizeof(un.sun_path) - 1] = '\0';
+                return orig(sockfd, buf, len, flags, (const struct sockaddr*)&un, sizeof(un));
+            }
+        }
+    }
+    return orig(sockfd, buf, len, flags, dest_addr, addrlen);
+}
+
+// sendmsg
+typedef ssize_t (*orig_sendmsg_t)(int, const struct msghdr*, int);
+ssize_t sendmsg(int sockfd, const struct msghdr* msg, int flags) {
+    static orig_sendmsg_t orig = NULL;
+    if (!orig) orig = (orig_sendmsg_t)dlsym(RTLD_NEXT, "sendmsg");
+    if (msg && msg->msg_name && msg->msg_namelen > sizeof(sa_family_t)) {
+        const struct sockaddr* addr = (const struct sockaddr*)msg->msg_name;
+        if (addr->sa_family == AF_UNIX) {
+            struct sockaddr_un un;
+            memcpy(&un, addr, msg->msg_namelen < sizeof(un) ? msg->msg_namelen : sizeof(un));
+            if (un.sun_path[0] != '\0') {
+                char r_buf[1024];
+                const char* r = redirect_path_glibc(un.sun_path, r_buf, sizeof(r_buf));
+                if (r != un.sun_path) {
+                    strncpy(un.sun_path, r, sizeof(un.sun_path) - 1);
+                    un.sun_path[sizeof(un.sun_path) - 1] = '\0';
+                    struct msghdr new_msg = *msg;
+                    new_msg.msg_name = &un;
+                    new_msg.msg_namelen = sizeof(un);
+                    return orig(sockfd, &new_msg, flags);
+                }
+            }
+        }
+    }
+    return orig(sockfd, msg, flags);
+}
+
+// getsockname
+typedef int (*orig_getsockname_t)(int, struct sockaddr*, socklen_t*);
+int getsockname(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
+    static orig_getsockname_t orig = NULL;
+    if (!orig) orig = (orig_getsockname_t)dlsym(RTLD_NEXT, "getsockname");
+    int ret = orig(sockfd, addr, addrlen);
+    if (ret == 0 && addr && addr->sa_family == AF_UNIX && addrlen && *addrlen > sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path_glibc(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// getpeername
+typedef int (*orig_getpeername_t)(int, struct sockaddr*, socklen_t*);
+int getpeername(int sockfd, struct sockaddr* addr, socklen_t* addrlen) {
+    static orig_getpeername_t orig = NULL;
+    if (!orig) orig = (orig_getpeername_t)dlsym(RTLD_NEXT, "getpeername");
+    int ret = orig(sockfd, addr, addrlen);
+    if (ret == 0 && addr && addr->sa_family == AF_UNIX && addrlen && *addrlen > sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path_glibc(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// recvfrom
+typedef ssize_t (*orig_recvfrom_t)(int, void*, size_t, int, struct sockaddr*, socklen_t*);
+ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen) {
+    static orig_recvfrom_t orig = NULL;
+    if (!orig) orig = (orig_recvfrom_t)dlsym(RTLD_NEXT, "recvfrom");
+    ssize_t ret = orig(sockfd, buf, len, flags, src_addr, addrlen);
+    if (ret >= 0 && src_addr && src_addr->sa_family == AF_UNIX && addrlen && *addrlen > sizeof(sa_family_t)) {
+        struct sockaddr_un* un = (struct sockaddr_un*)src_addr;
+        if (un->sun_path[0] != '\0') {
+            ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+            ssize_t vlen = virtualize_returned_path_glibc(un->sun_path, cur_len, sizeof(un->sun_path));
+            if (vlen > 0) {
+                *addrlen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+            }
+        }
+    }
+    return ret;
+}
+
+// recvmsg
+typedef ssize_t (*orig_recvmsg_t)(int, struct msghdr*, int);
+ssize_t recvmsg(int sockfd, struct msghdr* msg, int flags) {
+    static orig_recvmsg_t orig = NULL;
+    if (!orig) orig = (orig_recvmsg_t)dlsym(RTLD_NEXT, "recvmsg");
+    ssize_t ret = orig(sockfd, msg, flags);
+    if (ret >= 0 && msg && msg->msg_name && msg->msg_namelen > sizeof(sa_family_t)) {
+        struct sockaddr* addr = (struct sockaddr*)msg->msg_name;
+        if (addr->sa_family == AF_UNIX) {
+            struct sockaddr_un* un = (struct sockaddr_un*)addr;
+            if (un->sun_path[0] != '\0') {
+                ssize_t cur_len = (ssize_t)strlen(un->sun_path);
+                ssize_t vlen = virtualize_returned_path_glibc(un->sun_path, cur_len, sizeof(un->sun_path));
+                if (vlen > 0) {
+                    msg->msg_namelen = (socklen_t)(sizeof(sa_family_t) + (size_t)vlen + 1);
+                }
+            }
+        }
+    }
+    return ret;
+}
+
 FILE* fopen(const char* path, const char* mode) {
     static orig_fopen_t orig = NULL;
     if (!orig) orig = (orig_fopen_t)dlsym(RTLD_NEXT, "fopen");
