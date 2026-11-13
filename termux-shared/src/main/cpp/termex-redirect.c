@@ -176,11 +176,11 @@ static const char* redirect_path(const char* path, char* buffer, size_t bufsize)
 
     // 0. Universal Path De-duplication: detect and unpack path doubling
     // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
-    const char* embedded = strstr(path, "/data/data/com.termux");
-    if (!embedded) embedded = strstr(path, "/data/data/com.termex");
-    if (!embedded) embedded = strstr(path, "/data/user/0/com.termux");
-    if (!embedded) embedded = strstr(path, "/data/user/0/com.termex");
-    if (embedded && embedded > path) {
+    const char* embedded = strstr(path + 1, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(path + 1, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termex");
+    if (embedded) {
         path = embedded;
     }
 
@@ -1870,6 +1870,20 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
                     char rlib[1024];
                     const char* redirected_lib = redirect_path(eff_argv[i], rlib, sizeof(rlib));
                     new_argv[nidx++] = (redirected_lib != eff_argv[i]) ? strdup(redirected_lib) : eff_argv[i];
+                    continue;
+                }
+                if (strcmp(eff_argv[i], "--preload") == 0 && i + 1 < argc) {
+                    new_argv[nidx++] = eff_argv[i];
+                    i++;
+                    char rlib[1024];
+                    const char* redirected_preload = redirect_path(eff_argv[i], rlib, sizeof(rlib));
+                    new_argv[nidx++] = (redirected_preload != eff_argv[i]) ? strdup(redirected_preload) : eff_argv[i];
+                    continue;
+                }
+                if (strcmp(eff_argv[i], "--argv0") == 0 && i + 1 < argc) {
+                    new_argv[nidx++] = eff_argv[i];
+                    i++;
+                    new_argv[nidx++] = eff_argv[i];
                     continue;
                 }
                 if (eff_argv[i][0] == '-') {

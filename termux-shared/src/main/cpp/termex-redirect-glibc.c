@@ -141,11 +141,11 @@ static const char* redirect_path_glibc(const char* path, char* buffer, size_t bu
 
     // 0. Universal Path De-duplication: detect and unpack path doubling
     // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
-    const char* embedded = strstr(path, "/data/data/com.termux");
-    if (!embedded) embedded = strstr(path, "/data/data/com.termex");
-    if (!embedded) embedded = strstr(path, "/data/user/0/com.termux");
-    if (!embedded) embedded = strstr(path, "/data/user/0/com.termex");
-    if (embedded && embedded > path) {
+    const char* embedded = strstr(path + 1, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(path + 1, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termex");
+    if (embedded) {
         path = embedded;
     }
 

@@ -423,7 +423,7 @@ DESCRIPTION:
 
 
 
-COMMIT 32: [fb36c38] - 2026-11-13 10:10:00 +0530
+COMMIT 32: [6e50c86] - 2026-11-13 10:10:00 +0530
 MESSAGE: "fix: Universal path de-duplication, process boundary environment arming, and child bionic interposition, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -440,6 +440,38 @@ DESCRIPTION:
      - Built and installed updated APK on device.
      - Verified TermuxInstaller.java automatically updated libtermex-redirect.so (77,320 bytes) and libtermex-redirect-glibc.so (40,944 bytes) on launch.
      - Tested dpkg -l, apt update, and apt-cache search clang from both native Bionic shell and inside glibc environment with 0 errors.
+
+
+
+
+
+
+COMMIT 33: [c576b0f] - 2026-11-13 10:18:00 +0530
+MESSAGE: "test: Comprehensive 26-check stress test suite, inverted path de-duplication, and glibc loader argument parsing, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute a thorough 10-category, 26-check stress and regression test suite covering all historical and expected failure points:
+  1. Inverted & Nested Path De-duplication:
+     - Updated redirect_path() and redirect_path_glibc() to scan from path + 1 for embedded /data/data/com.termux, /data/data/com.termex, and /data/user/0/... prefixes.
+     - Resolves inverted doubled paths where canonical paths contained another embedded physical path (such as /data/data/com.termux/files/usr/data/user/0/com.termex/...).
+  2. Glibc Loader --preload and --argv0 Argument Handling:
+     - Fixed handle_shebang_exec() when executing ld-linux with explicit --preload and --argv0 flags.
+     - Previously, the loop treated --preload as a standalone flag and mistook its library path argument for the target binary, causing 'ld.so: object --argv0 from --preload cannot be preloaded'.
+     - Now consumes both flag and argument pairs together and injects --argv0 only before the real target binary.
+  3. Thorough 10-Category Test Suite (tests/test_termex_thorough.py):
+     - Cat 1: Canonical Path Redirection (directory listing, access X_OK, stat).
+     - Cat 2: Path Doubling Elimination (unpacks physical-canonical, canonical-physical, and apt log directories).
+     - Cat 3: Return Path Virtualization (os.getcwd(), os.readlink()).
+     - Cat 4: Shebang Rewriting (canonical bash shebang, shebang with arguments -e, env shebang).
+     - Cat 5: Glibc Dynamic Linker Isolation (glibc loader execution, ignoring Bionic LD_PRELOAD).
+     - Cat 6: Cross-Boundary Subprocess Execution (glibc spawning Bionic dpkg & apt-cache, Bionic bash spawning glibc binary).
+     - Cat 7: agy Full Execution Stack (agy --version, agy --help / agy.va39).
+     - Cat 8: Real Package Management (live apt-get install -y --reinstall tree, verify execution, clean purge).
+     - Cat 9: Raw Kernel Syscalls vs Libc Redirection (Go direct-syscall emulation via raw SYS_mkdirat on physical $HOME and Bionic canonical reconciliation).
+     - Cat 10: Glibc Network & DNS Resolution (glibc curl DNS lookup and TLS handshake to https://www.google.com).
+  4. Live Device Verification on Samsung Galaxy (Android 16):
+     - Executed test suite on device: 26 PASSED, 0 FAILED / 26 TOTAL.
+
 
 
 
