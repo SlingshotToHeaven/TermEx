@@ -873,3 +873,50 @@ DESCRIPTION:
      - 25-Check until_perfection_is_achieved_4 Suite: 25/25 PASS.
      - 25-Check until_perfection_is_achieved_5 Suite: 25/25 PASS.
      - Cumulative Grand Total: 356/356 PASSED (100% Success Rate).
+
+COMMIT 43: [e2377c1] - 2026-11-13 13:20:00 +0530
+MESSAGE: "test: 25-check post_perfection_brutal stress suite, 16-thread race, and 381/381 zero-regression pass, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute the 25-check Post-Perfection Brutal Stress Suite pushing concurrency, memory, and toolchain boundaries:
+  1. 25-Check post_perfection_brutal Stress Suite (tests/test_termex_post_perfection_brutal.py):
+     - 01. Brutal Concurrency: 16 concurrent threads perform 1,600 file create/stat/unlink ops without fault or race errors.
+     - 02. Deep Process Nesting: Deep multi-level subshell execution inherits canonical environment without stack overflow.
+     - 03. Extreme Path Torture: Stat path with dozens of interleaved dots, slashes, and step-outs resolves to canonical bash.
+     - 04. Dynamic Linker Torture: 50 rapid dlopen/dlsym/dlclose cycles on canonical library maintain zero leaks.
+     - 05. Socket Storm: 50 rapid sequential Unix domain stream connections and duplex transfers on canonical $TMPDIR.
+     - 06. Positional 1GB Vectored: 8-vector scatter-gather pwritev/preadv at 1GB offset preserves sparse disk allocation (<16KB).
+     - 07. Pthread Condvar Queue: Pthread condition variable producer-consumer queue compiles and synchronizes.
+     - 08. C++ Lambda & Transform: Modern C++ lambda expressions and std::transform pipeline execute cleanly.
+     - 09. Heavy Environment: Subprocess safely inherits massive 32KB environment block across 100 distinct variables.
+     - 10. Signal Storm: 25 rapid POSIX signal dispatches delivered and handled with zero missed signals.
+     - 11. ProcFS Comprehensive: Complete ProcFS sweep (/proc/self/{maps,status,cmdline,stat,comm,limits,fd}).
+     - 12. Anon Memory IPC: memfd_create() + mmap(MAP_SHARED) cross-process memory IPC without disk I/O.
+     - 13. Package Database: Package database queries (dpkg-query -s & apt-cache depends) resolve without permission faults.
+     - 14. Bidirectional Cross-Runtime: Glibc loader writes to canonical FIFO and Bionic background thread receives payload.
+     - 15. Deep Symlink Up-Tree: 25-level deep directory tree traversal with relative 25-step upward symlink.
+     - 16. Inode Parity: Canonical and physical stat queries return identical st_ino and st_dev.
+     - 17. Memory Pressure Build: Clang compiler toolchain executes cleanly under active process memory pressure.
+     - 18. 32KB Unix Datagram: 32KB datagram payload dispatch and reception across canonical Unix domain datagram socket.
+     - 19. FD Saturation: 100 canonical descriptors opened simultaneously and safely recovered without descriptor leaks.
+     - 20. Heavy Pipe Popen: 220KB bidirectional streaming through subprocess Popen without deadlock.
+     - 21. Ctor/Dtor Priority: Constructors execute in ascending order and destructors in reverse descending order.
+     - 22. Interleaved VFS Ops: Interleaved sparse seek, write, truncate, and read operations execute accurately.
+     - 23. Path Space & Emoji: Clang compiles and executes binary in path containing spaces and multiple emojis.
+     - 24. agy CLI Full Stack: agy Antigravity CLI executes through Glibc loader into Go runtime with 0 errors.
+     - 25. Brutal Grand Finale: Full toolchain pipeline: C++ STL -> object -> static archive -> link -> strip -> run.
+  2. Live Device Verification on Samsung Galaxy (Android 16):
+     - Executed 25-check post_perfection_brutal suite: 25 PASSED, 0 FAILED / 25 TOTAL.
+  3. Total Zero-Regression Verification Across All 11 Suites:
+     - 26-Check Thorough Suite: 26/26 PASS.
+     - 50-Check Rigorous Suite: 50/50 PASS.
+     - 100-Check Exhaustive Suite: 100/100 PASS.
+     - 25-Check Adversarial Suite: 25/25 PASS.
+     - 25-Check Hard Suite: 25/25 PASS.
+     - 30-Check until_perfection_is_achieved_1 Suite: 30/30 PASS.
+     - 25-Check until_perfection_is_achieved_2 Suite: 25/25 PASS.
+     - 25-Check until_perfection_is_achieved_3 Suite: 25/25 PASS.
+     - 25-Check until_perfection_is_achieved_4 Suite: 25/25 PASS.
+     - 25-Check until_perfection_is_achieved_5 Suite: 25/25 PASS.
+     - 25-Check post_perfection_brutal Suite: 25/25 PASS.
+     - Cumulative Grand Total: 381/381 PASSED (100% Success Rate).
