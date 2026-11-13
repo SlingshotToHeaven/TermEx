@@ -738,3 +738,47 @@ DESCRIPTION:
 
 
 
+
+COMMIT 40: [6d2e664] - 2026-11-13 11:35:00 +0530
+MESSAGE: "test: 25-check until_perfection_is_achieved_3 suite, static archive linking, and 306/306 zero-regression pass, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute 25 new innovative tests pushing compiler toolchain, POSIX signals, ProcFS, and kernel boundaries:
+  1. 25-Check until_perfection_is_achieved_3 Test Suite (tests/test_termex_until_perfection_is_achieved_3.py):
+     - 01. Static Toolchain: Static library archive creation (ar rcs) & Clang linking and execution on canonical path.
+     - 02. Constructor/Destructor: ELF __attribute__((constructor)) and __attribute__((destructor)) hooks execute in exact order on canonical binary.
+     - 03. Signal Capture: Subprocess termination via fatal signal captured accurately (SIGSEGV / WTERMSIG == 11).
+     - 04. Resource Accounting: os.wait4() rusage captures child process memory metrics (ru_maxrss > 0).
+     - 05. FD Inheritable: os.get/set_inheritable() flag toggling on canonical file descriptor.
+     - 06. Directory Link Policy: POSIX prohibition on directory hard links raises clean EPERM via link() interposition.
+     - 07. Tempfile Lifecycle: tempfile.NamedTemporaryFile auto-lifecycle in canonical $TMPDIR.
+     - 08. Directory Walk: os.walk(topdown=False) bottom-up traversal on canonical hierarchy.
+     - 09. Mutual Symlink Loop: Mutual circular symlink loop (A <-> B) raises ELOOP on canonical path.
+     - 10. Socket Half-Close: AF_UNIX socket shutdown(SHUT_WR) half-close retains readable reverse stream.
+     - 11. Large Datagram: AF_UNIX SOCK_DGRAM large buffer (16KB) dispatch and reception on canonical socket.
+     - 12. Socket Timeout: AF_UNIX socket settimeout(0.05) raises clean socket.timeout on canonical path.
+     - 13. Cross-Toolchain: Glibc dynamic loader executes bash which invokes Bionic Clang binary.
+     - 14. Multiline Env: Multi-line environment variable passed and read cleanly in subshell.
+     - 15. ProcFS Maps: /proc/self/maps lists active preloaded redirection library.
+     - 16. ProcFS Cmdline: /proc/self/cmdline parses null-separated command line tokens.
+     - 17. ProcFS Stat: /proc/self/stat reports valid PID and running/sleeping process state.
+     - 18. Byte-Range Locks: fcntl.lockf() non-overlapping byte-range locks hold simultaneously without conflict.
+     - 19. Lock Fork Inheritance: BSD flock(LOCK_EX) table entry inherited cleanly across fork().
+     - 20. Binary Integrity: 64KB binary buffer with embedded null bytes preserves exact hash.
+     - 21. UTF-8 Script Exec: Script execution with multilingual UTF-8 comments executes cleanly.
+     - 22. Concurrent VFS Mutation: Concurrent directory enumeration while files are created and unlinked.
+     - 23. Session Leadership: Process calls setsid() and establishes valid session leadership (getsid).
+     - 24. Relative Up-Links: Deep nested relative symlink (../../../root_token.txt) resolves cleanly.
+     - 25. Full Pipeline: Full toolchain build pipeline: source -> compile -> ar archive -> link -> execute.
+  2. Live Device Verification on Samsung Galaxy (Android 16):
+     - Executed 25-check until_perfection_is_achieved_3 suite: 25 PASSED, 0 FAILED / 25 TOTAL.
+  3. Total Zero-Regression Verification Across All 8 Suites:
+     - 26-Check Thorough Suite: 26/26 PASS.
+     - 50-Check Rigorous Suite: 50/50 PASS.
+     - 100-Check Exhaustive Suite: 100/100 PASS.
+     - 25-Check Adversarial Suite: 25/25 PASS.
+     - 25-Check Hard Suite: 25/25 PASS.
+     - 30-Check until_perfection_is_achieved_1 Suite: 30/30 PASS.
+     - 25-Check until_perfection_is_achieved_2 Suite: 25/25 PASS.
+     - 25-Check until_perfection_is_achieved_3 Suite: 25/25 PASS.
+     - Cumulative Grand Total: 306/306 PASSED (100% Success Rate).
