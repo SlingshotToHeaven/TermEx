@@ -174,6 +174,16 @@ static inline int is_protected_system_dir(const char* path) {
 static const char* redirect_path(const char* path, char* buffer, size_t bufsize) {
     if (!path || current_app_dir_len == 0) return path;
 
+    // 0. Universal Path De-duplication: detect and unpack path doubling
+    // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
+    const char* embedded = strstr(path, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(path, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(path, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(path, "/data/user/0/com.termex");
+    if (embedded && embedded > path) {
+        path = embedded;
+    }
+
     // Fast rejection for non-matching paths
     char c0 = path[0];
     if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') {

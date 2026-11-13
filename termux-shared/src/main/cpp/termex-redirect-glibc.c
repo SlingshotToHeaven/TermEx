@@ -108,11 +108,46 @@ static void init_redirect_glibc(void) {
             virtualize_returned_path_glibc(vpwd, (ssize_t)strlen(vpwd), sizeof(vpwd));
             setenv("PWD", vpwd, 1);
         }
+
+        char bionic_so[512] = {0};
+        char bionic_lib[512] = {0};
+        if (current_app_dir[0]) {
+            snprintf(bionic_so, sizeof(bionic_so), "%s/files/usr/lib/libtermex-redirect.so", current_app_dir);
+            snprintf(bionic_lib, sizeof(bionic_lib), "%s/files/usr/lib", current_app_dir);
+
+            // Arm environment for any Bionic subprocesses spawned by Go/glibc via direct syscalls:
+            setenv("LD_PRELOAD", bionic_so, 1);
+            setenv("LD_LIBRARY_PATH", bionic_lib, 1);
+            setenv("PREFIX", "/data/data/com.termux/files/usr", 1);
+            setenv("TERMEX_REAL_APP_DIR", current_app_dir, 1);
+            setenv("TERMUX_VERSION", "0.118.0", 1);
+        }
+
+        const char* cur_path = getenv("PATH");
+        if (!cur_path || strstr(cur_path, "/data/data/com.termux/files/usr/bin") == NULL) {
+            char new_p[2048];
+            if (cur_path) {
+                snprintf(new_p, sizeof(new_p), "/data/data/com.termux/files/usr/bin:%s", cur_path);
+            } else {
+                snprintf(new_p, sizeof(new_p), "/data/data/com.termux/files/usr/bin:/system/bin");
+            }
+            setenv("PATH", new_p, 1);
+        }
     }
 }
 
 static const char* redirect_path_glibc(const char* path, char* buffer, size_t bufsize) {
     if (!path || current_app_dir_len == 0) return path;
+
+    // 0. Universal Path De-duplication: detect and unpack path doubling
+    // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
+    const char* embedded = strstr(path, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(path, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(path, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(path, "/data/user/0/com.termex");
+    if (embedded && embedded > path) {
+        path = embedded;
+    }
 
     char c0 = path[0];
     if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') return path;

@@ -419,3 +419,27 @@ DESCRIPTION:
      - Verified agy --version (1.3.0) and interactive agy initialization (Language server listening on random ports, cli.log created, conversation_summaries.db initialized).
 
 
+
+
+
+
+COMMIT 32: [fb36c38] - 2026-11-13 10:10:00 +0530
+MESSAGE: "fix: Universal path de-duplication, process boundary environment arming, and child bionic interposition, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Eliminate path doubling (<prefix>/data/data/com.termux/...) and subprocess Permission denied across Bionic and Glibc:
+  1. Universal Path De-duplication in termex-redirect.c and termex-redirect-glibc.c:
+     - Intercepted paths containing embedded /data/data/com.termux, /data/data/com.termex, /data/user/0/com.termux, and /data/user/0/com.termex.
+     - Automatically unpacks and cleans doubled path prefixes produced by tools (such as apt and dpkg) that concatenate $PREFIX with internal hardcoded paths.
+     - Resolves the bug where apt looked for files at /data/user/0/com.termex/files/usr/data/data/com.termux/.../eipp.log.xz.
+  2. Subprocess Environment Arming in init_redirect_glibc():
+     - When Go / Glibc processes (such as agy.va39) initialize, init_redirect_glibc() automatically arms the process environment (setenv) with LD_PRELOAD pointing to Bionic libtermex-redirect.so, LD_LIBRARY_PATH pointing to Bionic usr/lib, PREFIX=/data/data/com.termux/files/usr, and valid PATH.
+     - Even though Go's os/exec executes raw SYS_clone / SYS_execve assembly bypassing libc, Go passes its os.Environ() to child processes.
+     - This guarantees all Bionic subprocesses spawned by agy (such as bash, pkg, dpkg, apt, git) inherit the full path redirection middleman and canonical environment, completely eliminating 'dpkg: error opening configuration directory ...: Permission denied'.
+  3. Live Device Verification on Samsung Galaxy (Android 16):
+     - Built and installed updated APK on device.
+     - Verified TermuxInstaller.java automatically updated libtermex-redirect.so (77,320 bytes) and libtermex-redirect-glibc.so (40,944 bytes) on launch.
+     - Tested dpkg -l, apt update, and apt-cache search clang from both native Bionic shell and inside glibc environment with 0 errors.
+
+
+
