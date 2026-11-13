@@ -961,6 +961,42 @@ int symlink(const char* target, const char* linkpath) {
     return orig(redirect_path(target, buf1, sizeof(buf1)), redirect_path(linkpath, buf2, sizeof(buf2)));
 }
 
+// mkfifo
+typedef int (*orig_mkfifo_t)(const char*, mode_t);
+int mkfifo(const char* pathname, mode_t mode) {
+    static orig_mkfifo_t orig = NULL;
+    if (!orig) orig = (orig_mkfifo_t)dlsym(RTLD_NEXT, "mkfifo");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+// mkfifoat
+typedef int (*orig_mkfifoat_t)(int, const char*, mode_t);
+int mkfifoat(int dirfd, const char* pathname, mode_t mode) {
+    static orig_mkfifoat_t orig = NULL;
+    if (!orig) orig = (orig_mkfifoat_t)dlsym(RTLD_NEXT, "mkfifoat");
+    char buf[1024];
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode);
+}
+
+// mknod
+typedef int (*orig_mknod_t)(const char*, mode_t, dev_t);
+int mknod(const char* pathname, mode_t mode, dev_t dev) {
+    static orig_mknod_t orig = NULL;
+    if (!orig) orig = (orig_mknod_t)dlsym(RTLD_NEXT, "mknod");
+    char buf[1024];
+    return orig(redirect_path(pathname, buf, sizeof(buf)), mode, dev);
+}
+
+// mknodat
+typedef int (*orig_mknodat_t)(int, const char*, mode_t, dev_t);
+int mknodat(int dirfd, const char* pathname, mode_t mode, dev_t dev) {
+    static orig_mknodat_t orig = NULL;
+    if (!orig) orig = (orig_mknodat_t)dlsym(RTLD_NEXT, "mknodat");
+    char buf[1024];
+    return orig(dirfd, redirect_path(pathname, buf, sizeof(buf)), mode, dev);
+}
+
 // connect
 typedef int (*orig_connect_t)(int, const struct sockaddr*, socklen_t);
 int connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen) {

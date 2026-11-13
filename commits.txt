@@ -505,7 +505,7 @@ DESCRIPTION:
 
 
 
-COMMIT 35: [f8f4a2f] - 2026-11-13 10:45:00 +0530
+COMMIT 35: [a3c38d8] - 2026-11-13 10:45:00 +0530
 MESSAGE: "test: 100-check exhaustive stress suite, dot-slash path collapse, and shebang flag parsing, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -534,6 +534,51 @@ DESCRIPTION:
   5. Live Device Verification on Samsung Galaxy (Android 16):
      - Built and installed updated APK on device.
      - Executed 100-check test suite on live connected device: 100 PASSED, 0 FAILED / 100 TOTAL.
+
+
+
+
+
+
+COMMIT 36: [399a223] - 2026-11-13 10:56:00 +0530
+MESSAGE: "test: 25-check adversarial suite, mkfifo/mknod hooks, and cross-runtime multiplexing, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute 25 new adversarial, out-of-the-box stress checks covering exotic edge cases:
+  1. Interposed mkfifo, mkfifoat, mknod, and mknodat:
+     - Added interposition for mkfifo, mkfifoat, mknod, and mknodat in both termex-redirect.c and termex-redirect-glibc.c.
+     - Ensures creation of named pipes (FIFOs) and device nodes targeting canonical Termux paths (/data/data/com.termux/...) transparently redirect to physical app storage without Permission denied errors.
+  2. 25-Check Adversarial Test Suite (tests/test_termex_25_adversarial.py):
+     - 01. /proc/self/fd/<fd> traversal and readlink resolution.
+     - 02. /proc/self/exe symbolic link resolution.
+     - 03. dlopen() on canonical shared library path (/usr/lib/libz.so).
+     - 04. dlopen('./libz.so') relative loading after chdir to /usr/lib.
+     - 05. Null-byte path injection safety check (ValueError rejection).
+     - 06. Pathological giant path (>4096 bytes) ENAMETOOLONG handling.
+     - 07. Unlink on active open mapped file retains valid inode access.
+     - 08. os.sendfile() zero-copy kernel transfer between canonical descriptors.
+     - 09. POSIX FIFO (named pipe) creation & non-blocking I/O on canonical path.
+     - 10. select.poll() event loop on canonical Unix Domain Socket.
+     - 11. Multi-threaded concurrency stress (8 threads x 125 ops = 1000 ops).
+     - 12. Fork child inherits directory stream state (telldir/seekdir).
+     - 13. os.scandir() on empty canonical directory returns empty iterator.
+     - 14. Unicode & emoji filename handling (tëst_ünicöde_🚀.txt).
+     - 15. Cross-process POSIX signal delivery (SIGUSR1) from child bash.
+     - 16. Extreme upward traversal step-outs past root (/../../../../data/data/...).
+     - 17. Canonical symlink targeting /dev/null remains uncorrupted.
+     - 18. SCM_RIGHTS file descriptor passing across Unix domain socket.
+     - 19. posix_fadvise(POSIX_FADV_RANDOM) on open canonical descriptor.
+     - 20. shutil.move() relocation across canonical /tmp and /home directories.
+     - 21. Subprocess execution with colon-separated multiple LD_PRELOAD libraries.
+     - 22. Direct script exec: shebang targeting symlink with dots & versions.
+     - 23. Execution of non-ELF corrupt binary rejected cleanly (no SIGSEGV).
+     - 24. Direct execution of glibc dynamic loader (ld-linux --help).
+     - 25. Deep 10-level nested subshell process chain (bash -> bash ... x10).
+  3. Live Device Verification on Samsung Galaxy (Android 16):
+     - Built and installed updated APK on device.
+     - Executed 25-check adversarial test suite: 25 PASSED, 0 FAILED / 25 TOTAL.
+     - Verified zero regressions on 100-check suite (100/100 PASS) and 50-check suite (50/50 PASS).
+
 
 
 
