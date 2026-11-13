@@ -446,7 +446,7 @@ DESCRIPTION:
 
 
 
-COMMIT 33: [c576b0f] - 2026-11-13 10:18:00 +0530
+COMMIT 33: [ecc2f0b] - 2026-11-13 10:18:00 +0530
 MESSAGE: "test: Comprehensive 26-check stress test suite, inverted path de-duplication, and glibc loader argument parsing, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -471,6 +471,35 @@ DESCRIPTION:
      - Cat 10: Glibc Network & DNS Resolution (glibc curl DNS lookup and TLS handshake to https://www.google.com).
   4. Live Device Verification on Samsung Galaxy (Android 16):
      - Executed test suite on device: 26 PASSED, 0 FAILED / 26 TOTAL.
+
+
+
+
+
+
+COMMIT 34: [36fe962] - 2026-11-13 10:28:00 +0530
+MESSAGE: "test: 50-check out-of-the-box stress suite, glibc link/symlink hooks, and deep execution resilience, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute an exhaustive 50-check stress and resilience test suite covering 10 distinct failure domains:
+  1. Glibc Link & Symlink Interposition:
+     - Added hooks for symlink, symlinkat, link, and linkat in termex-redirect-glibc.c.
+     - Ensures Glibc binaries and build tools (such as make, git, rustc, and tar) can create and manipulate symlinks and hardlinks targeting canonical Termux paths.
+  2. 50-Check Out-of-the-Box Test Suite (tests/test_termex_50_rigorous.py):
+     - Cat A (Path Formats): Redundant slashes, dot-slash sequences, parent-dir traversal within canonical tree, trailing slashes, and 3x stacked nested path doubling.
+     - Cat B (Dirfd *at): openat relative to dfd, absolute path override on dfd, fstatat, faccessat, and mkdirat/unlinkat lifecycle.
+     - Cat C (Symlinks & Links): Absolute canonical symlink, relative cross-dir symlink, chained multi-hop symlink, broken symlink (lstat vs stat), and linkat path redirection.
+     - Cat D (Mutations & Metadata): chmod 0640, truncate expand/shrink, utime timestamp update, rename across canonical directories, and renameat2 RENAME_NOREPLACE collision protection.
+     - Cat E (Locking & IPC): fcntl.lockf POSIX advisory lock, fcntl.flock BSD lock, Unix Domain Socket bind(), connect(), and full-duplex data transfer over canonical paths.
+     - Cat F (Process Execution): fork() without exec() retaining virtualized process state, popen() pipeline execution, deep 5-level execution chain (bash -> python -> sh), execve with empty environment (env -i), and execve with unset PATH.
+     - Cat G (CWD Virtualization): chdir canonical usr/bin, chdir physical usr/bin virtualizing to com.termux, parent directory traversal, $PWD tracking in subshells, and relative file creation.
+     - Cat H (Glibc Isolation): Glibc loader execution with empty env, glibc canonical dir test, glibc spawning Bionic git, glibc spawning Bionic tar, and cross-boundary pipeline (glibc_bash -> bionic_tr).
+     - Cat I (CLI & Build Tools): git init, git config & commit within virtualized repo, git log inspection, tar create & extract (-czf/-xzf), and Bionic curl HTTPS request with TLS verification.
+     - Cat J (Package Manager): dpkg-query database query, apt-cache depends resolution, dpkg frontend lock acquisition, apt-get check dependency verification, and agy CLI end-to-end stack execution.
+  3. Live Device Verification on Samsung Galaxy (Android 16):
+     - Recompiled glibc redirect library and built/installed APK on live device.
+     - Executed 50-check test suite: 50 PASSED, 0 FAILED / 50 TOTAL.
+
 
 
 

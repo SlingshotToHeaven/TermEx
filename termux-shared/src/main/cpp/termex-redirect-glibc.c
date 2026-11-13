@@ -743,6 +743,40 @@ int renameat2(int olddirfd, const char* oldpath, int newdirfd, const char* newpa
     return renameat(olddirfd, r1, newdirfd, r2);
 }
 
+typedef int (*orig_symlink_t)(const char*, const char*);
+int symlink(const char* target, const char* linkpath) {
+    static orig_symlink_t orig = NULL;
+    if (!orig) orig = (orig_symlink_t)dlsym(RTLD_NEXT, "symlink");
+    char buf1[1024], buf2[1024];
+    return orig(redirect_path_glibc(target, buf1, sizeof(buf1)), redirect_path_glibc(linkpath, buf2, sizeof(buf2)));
+}
+
+typedef int (*orig_symlinkat_t)(const char*, int, const char*);
+int symlinkat(const char* target, int newdirfd, const char* linkpath) {
+    static orig_symlinkat_t orig = NULL;
+    if (!orig) orig = (orig_symlinkat_t)dlsym(RTLD_NEXT, "symlinkat");
+    char buf1[1024], buf2[1024];
+    return orig(redirect_path_glibc(target, buf1, sizeof(buf1)), newdirfd, redirect_path_glibc(linkpath, buf2, sizeof(buf2)));
+}
+
+typedef int (*orig_link_t)(const char*, const char*);
+int link(const char* oldpath, const char* newpath) {
+    static orig_link_t orig = NULL;
+    if (!orig) orig = (orig_link_t)dlsym(RTLD_NEXT, "link");
+    char buf1[1024], buf2[1024];
+    return orig(redirect_path_glibc(oldpath, buf1, sizeof(buf1)), redirect_path_glibc(newpath, buf2, sizeof(buf2)));
+}
+
+typedef int (*orig_linkat_t)(int, const char*, int, const char*, int);
+int linkat(int olddirfd, const char* oldpath, int newdirfd, const char* newpath, int flags) {
+    static orig_linkat_t orig = NULL;
+    if (!orig) orig = (orig_linkat_t)dlsym(RTLD_NEXT, "linkat");
+    char buf1[1024], buf2[1024];
+    return orig(olddirfd, redirect_path_glibc(oldpath, buf1, sizeof(buf1)),
+                newdirfd, redirect_path_glibc(newpath, buf2, sizeof(buf2)),
+                flags);
+}
+
 DIR* opendir(const char* path) {
     static orig_opendir_t orig = NULL;
     if (!orig) orig = (orig_opendir_t)dlsym(RTLD_NEXT, "opendir");
