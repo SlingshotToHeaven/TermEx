@@ -540,7 +540,7 @@ DESCRIPTION:
 
 
 
-COMMIT 36: [399a223] - 2026-11-13 10:56:00 +0530
+COMMIT 36: [6708aa3] - 2026-11-13 10:56:00 +0530
 MESSAGE: "test: 25-check adversarial suite, mkfifo/mknod hooks, and cross-runtime multiplexing, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -578,6 +578,53 @@ DESCRIPTION:
      - Built and installed updated APK on device.
      - Executed 25-check adversarial test suite: 25 PASSED, 0 FAILED / 25 TOTAL.
      - Verified zero regressions on 100-check suite (100/100 PASS) and 50-check suite (50/50 PASS).
+
+
+
+
+
+
+COMMIT 37: [d3c4afd] - 2026-11-13 11:05:00 +0530
+MESSAGE: "test: 25-check hard stress suite, atomic directory replacement, and total 226/226 zero-regression pass, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute 25 new hard and stressful tests pushing deep into Linux kernel, VFS, and process limits:
+  1. 25-Check Hard & Stressful Test Suite (tests/test_termex_25_hard.py):
+     - 01. Shared Memory: mmap(MAP_SHARED | MAP_ANON) cross-fork memory persistence across canonical processes.
+     - 02. Inode Integrity: Canonical & physical paths resolve to identical inode (st_ino/st_dev).
+     - 03. Anonymous Files: O_TMPFILE filesystem query without directory entry.
+     - 04. Process Spawning: posix_spawn with file action stdout redirect to canonical path.
+     - 05. Symlink Depth: 25-hop deep symlink chain resolves & infinite loop raises ELOOP.
+     - 06. Tree Deletion: shutil.rmtree() on complex tree with read-only files (mode 0444) and dead symlinks.
+     - 07. File Descriptor Flags: fcntl(F_SETFD, FD_CLOEXEC) & O_APPEND forced end-of-file write.
+     - 08. Scalability: Large directory scale: 1,000 files created, enumerated, and deleted on canonical path.
+     - 09. VFS Metrics: statvfs() metric parity between canonical and physical directories.
+     - 10. Environment Expansion: Canonical path variable export & expansion across bash -> python subshell.
+     - 11. Concurrency: Concurrent writer/truncator threads race on canonical file descriptor.
+     - 12. Sparse Files: Sparse file creation with 10MB hole (st_blocks < 128KB allocated).
+     - 13. Atomic Moves: os.replace() atomic directory replacement over existing canonical directory.
+     - 14. Pipelines: pipe2(O_CLOEXEC | O_NONBLOCK) creation and data streaming.
+     - 15. Process Limits: Script execution with large environment block (>35KB) without stack overflow.
+     - 16. Cross-Runtime: Glibc binary reads canonical file written by Bionic runtime.
+     - 17. Lock Contention: 5 parallel processes serialized atomic increments via flock().
+     - 18. Path Syntax: Path stepping into a regular file (/bin/bash/..) returns ENOTDIR.
+     - 19. Timestamps: os.utime(ns=...) preserves nanosecond timestamp on canonical file.
+     - 20. Multiprocessing: multiprocessing.Pool worker execution on canonical paths.
+     - 21. Atomic Open: O_CREAT | O_EXCL atomic collision rejection raises EEXIST.
+     - 22. Binary Copying: shutil.copy2() binary copy preserves exact size and executable mode.
+     - 23. Pathological Shebang: Direct exec: pathological shebang (redundant // and /.. step-out).
+     - 24. System Linker: Direct invocation of /system/bin/linker64 on system shell.
+     - 25. Process Groups: Process group creation (setsid) & signal termination (killpg).
+  2. Live Device Verification on Samsung Galaxy (Android 16):
+     - Executed 25-check hard suite: 25 PASSED, 0 FAILED / 25 TOTAL.
+  3. Total Zero-Regression Verification Across All Suites:
+     - 26-Check Thorough Suite: 26/26 PASS.
+     - 50-Check Rigorous Suite: 50/50 PASS.
+     - 100-Check Exhaustive Suite: 100/100 PASS.
+     - 25-Check Adversarial Suite: 25/25 PASS.
+     - 25-Check Hard Suite: 25/25 PASS.
+     - Grand Total: 226/226 PASSED (100% Success Rate).
+
 
 
 
