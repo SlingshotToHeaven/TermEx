@@ -477,7 +477,7 @@ DESCRIPTION:
 
 
 
-COMMIT 34: [36fe962] - 2026-11-13 10:28:00 +0530
+COMMIT 34: [df734ee] - 2026-11-13 10:28:00 +0530
 MESSAGE: "test: 50-check out-of-the-box stress suite, glibc link/symlink hooks, and deep execution resilience, see commits.txt"
 --------------------------------------------------------------------------------
 DESCRIPTION:
@@ -499,6 +499,42 @@ DESCRIPTION:
   3. Live Device Verification on Samsung Galaxy (Android 16):
      - Recompiled glibc redirect library and built/installed APK on live device.
      - Executed 50-check test suite: 50 PASSED, 0 FAILED / 50 TOTAL.
+
+
+
+
+
+
+COMMIT 35: [f8f4a2f] - 2026-11-13 10:45:00 +0530
+MESSAGE: "test: 100-check exhaustive stress suite, dot-slash path collapse, and shebang flag parsing, see commits.txt"
+--------------------------------------------------------------------------------
+DESCRIPTION:
+- Design and execute an exhaustive 100-check out-of-the-box stress test suite covering 10 distinct failure domains:
+  1. Universal Dot-Slash & Multi-Slash Path Collapse:
+     - Implemented collapse_dots_and_slashes() in both termex-redirect.c and termex-redirect-glibc.c.
+     - Collapses redundant consecutive slashes (//+) and dot-slash sequences (/./) across entire paths before matching and canonicalization.
+     - Fixes Permission denied on complex paths with interspersed dot-slashes (e.g. /data/./data/./com.termux/./files/./usr/./bin/./bash).
+  2. Bounded Return Path Virtualization (readlink / readlinkat safety):
+     - Enhanced virtualize_returned_path() in both Bionic and Glibc redirect engines.
+     - Explicitly bounds buffer copying to input length with null-termination guarantee in local working buffer, eliminating trailing garbage bytes from non-null-terminated readlink() syscall results.
+  3. Multi-Argument Shebang Parsing:
+     - Enhanced handle_shebang_exec() and posix_spawn() in termex-redirect.c to tokenize multiple arguments in script shebang headers (e.g. #!/path/bash -e -u).
+     - Splits arguments cleanly by whitespace into argv tokens so scripts with flags execute seamlessly without invalid option errors.
+  4. Exhaustive 100-Check Test Suite (tests/test_termex_100_exhaustive.py):
+     - Domain 1: Extreme Path Normalization & Encodings (Tests 1-10).
+     - Domain 2: File Creation, Read/Write, Seeking & FDs (Tests 11-20).
+     - Domain 3: Directory-Relative (*at) Syscalls & Scans (Tests 21-30).
+     - Domain 4: Symlinks, Hardlinks & Link Chains (Tests 31-40).
+     - Domain 5: Memory Mapping & Shared Memory (Tests 41-50).
+     - Domain 6: File Locking, IPC & Unix Sockets (Tests 51-60).
+     - Domain 7: Process Spawning, Shebangs & Environment (Tests 61-70).
+     - Domain 8: Return Path Virtualization & Working Directory (Tests 71-80).
+     - Domain 9: Glibc Dynamic Linker & Cross-Toolchain Interop (Tests 81-90).
+     - Domain 10: Package Management, Networking, Go Syscalls & agy (Tests 91-100).
+  5. Live Device Verification on Samsung Galaxy (Android 16):
+     - Built and installed updated APK on device.
+     - Executed 100-check test suite on live connected device: 100 PASSED, 0 FAILED / 100 TOTAL.
+
 
 
 

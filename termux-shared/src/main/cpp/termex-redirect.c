@@ -171,26 +171,60 @@ static inline int is_protected_system_dir(const char* path) {
     return 0;
 }
 
+static const char* collapse_dots_and_slashes(const char* path, char* out, size_t out_size) {
+    if (!path || !out || out_size < 2) return path;
+    if (!strstr(path, "//") && !strstr(path, "/./") && strncmp(path, "./", 2) != 0) {
+        return path;
+    }
+    const char* src = path;
+    char* dst = out;
+    char* end = out + out_size - 1;
+
+    if (*src == '/') {
+        *dst++ = '/';
+        while (*src == '/') src++;
+    }
+
+    while (*src && dst < end) {
+        // Skip "/." followed by '/' or '\0'
+        if (*src == '.' && (src[1] == '/' || src[1] == '\0') && (dst == out || *(dst - 1) == '/')) {
+            src++;
+            if (*src == '/') src++;
+            continue;
+        }
+        if (*src == '/' && dst > out && *(dst - 1) == '/') {
+            src++;
+            continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+    return out;
+}
+
 static const char* redirect_path(const char* path, char* buffer, size_t bufsize) {
     if (!path || current_app_dir_len == 0) return path;
 
+    char clean_buf[1024];
+    const char* norm_path = collapse_dots_and_slashes(path, clean_buf, sizeof(clean_buf));
+
     // 0. Universal Path De-duplication: detect and unpack path doubling
     // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
-    const char* embedded = strstr(path + 1, "/data/data/com.termux");
-    if (!embedded) embedded = strstr(path + 1, "/data/data/com.termex");
-    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termux");
-    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termex");
+    const char* embedded = strstr(norm_path + 1, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/user/0/com.termex");
     if (embedded) {
-        path = embedded;
+        norm_path = embedded;
     }
 
     // Fast rejection for non-matching paths
-    char c0 = path[0];
+    char c0 = norm_path[0];
     if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') {
         return path;
     }
 
-    const char* p = path;
+    const char* p = norm_path;
     // Skip leading './' sequences
     if (p[0] == '.') {
         while (p[0] == '.' && p[1] == '/') {
@@ -646,55 +680,62 @@ int dladdr(const void* addr, Dl_info* info) {
 static ssize_t virtualize_returned_path(char* buf, ssize_t len, size_t bufsiz) {
     if (len <= 0 || !buf || current_app_dir_len == 0) return len;
 
+    char tmp[1024];
+    size_t in_len = (size_t)len < sizeof(tmp) - 1 ? (size_t)len : sizeof(tmp) - 1;
+    memcpy(tmp, buf, in_len);
+    tmp[in_len] = '\0';
+
     const char* matched_prefix = NULL;
     size_t matched_prefix_len = 0;
 
     // 1. Match current_app_dir (e.g. /data/user/10/com.termex or /data/data/com.termex)
-    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0 &&
-        (buf[current_app_dir_len] == '\0' || buf[current_app_dir_len] == '/')) {
+    if (in_len >= current_app_dir_len && strncmp(tmp, current_app_dir, current_app_dir_len) == 0 &&
+        (tmp[current_app_dir_len] == '\0' || tmp[current_app_dir_len] == '/')) {
         matched_prefix = current_app_dir;
         matched_prefix_len = current_app_dir_len;
     }
     // 2. Match /data/data/com.termex
-    else if ((size_t)len >= TARGET_LEN3 && strncmp(buf, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
-             (buf[TARGET_LEN3] == '\0' || buf[TARGET_LEN3] == '/')) {
+    else if (in_len >= TARGET_LEN3 && strncmp(tmp, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
+             (tmp[TARGET_LEN3] == '\0' || tmp[TARGET_LEN3] == '/')) {
         matched_prefix = TARGET_PREFIX3;
         matched_prefix_len = TARGET_LEN3;
     }
     // 3. Match /data/user/0/com.termex
-    else if ((size_t)len >= TARGET_LEN4 && strncmp(buf, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
-             (buf[TARGET_LEN4] == '\0' || buf[TARGET_LEN4] == '/')) {
+    else if (in_len >= TARGET_LEN4 && strncmp(tmp, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
+             (tmp[TARGET_LEN4] == '\0' || tmp[TARGET_LEN4] == '/')) {
         matched_prefix = TARGET_PREFIX4;
         matched_prefix_len = TARGET_LEN4;
     }
     // 4. Match /data/user/0/com.termux
-    else if ((size_t)len >= TARGET_LEN2 && strncmp(buf, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
-             (buf[TARGET_LEN2] == '\0' || buf[TARGET_LEN2] == '/')) {
+    else if (in_len >= TARGET_LEN2 && strncmp(tmp, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
+             (tmp[TARGET_LEN2] == '\0' || tmp[TARGET_LEN2] == '/')) {
         matched_prefix = TARGET_PREFIX2;
         matched_prefix_len = TARGET_LEN2;
     }
     // 5. Match /data/user/<id>/com.termux or /data/user/<id>/com.termex
-    else if (strncmp(buf, "/data/user/", 11) == 0) {
-        const char* after = buf + 11;
+    else if (strncmp(tmp, "/data/user/", 11) == 0) {
+        const char* after = tmp + 11;
         while (*after >= '0' && *after <= '9') after++;
         if (*after == '/') {
             if ((strncmp(after + 1, "com.termux", 10) == 0 && (after[11] == '/' || after[11] == '\0')) ||
                 (strncmp(after + 1, "com.termex", 10) == 0 && (after[11] == '/' || after[11] == '\0'))) {
-                matched_prefix = buf;
-                matched_prefix_len = (after + 11) - buf;
+                matched_prefix = tmp;
+                matched_prefix_len = (after + 11) - tmp;
             }
         }
     }
 
     if (matched_prefix && matched_prefix_len > 0) {
-        const char* suffix = buf + matched_prefix_len;
+        size_t suffix_len = in_len - matched_prefix_len;
         char vpath[1024];
         // ALWAYS virtualize to canonical OG Termux path (/data/data/com.termux)
-        int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+        int n = snprintf(vpath, sizeof(vpath), "%s%.*s", TARGET_PREFIX1, (int)suffix_len, tmp + matched_prefix_len);
         if (n > 0) {
-            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz - 1;
+            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz;
             memcpy(buf, vpath, to_copy);
-            buf[to_copy] = '\0';
+            if (to_copy < bufsiz) {
+                buf[to_copy] = '\0';
+            }
             return (ssize_t)to_copy;
         }
     }
@@ -1973,18 +2014,36 @@ static int handle_shebang_exec(const char* rpath, char* const argv[], char* cons
                         interp_envp = ensure_env(envp, is_glibc, interp_is_system);
                     }
 
+                    char* interp_tokens[16];
+                    int token_count = 0;
+                    if (interp_arg) {
+                        char* cur = interp_arg;
+                        while (*cur && token_count < 15) {
+                            while (*cur == ' ' || *cur == '\t') cur++;
+                            if (*cur == '\0') break;
+                            interp_tokens[token_count++] = cur;
+                            while (*cur && *cur != ' ' && *cur != '\t') cur++;
+                            if (*cur) {
+                                *cur = '\0';
+                                cur++;
+                            }
+                        }
+                    }
+
                     int argc = 0;
                     while (eff_argv && eff_argv[argc]) argc++;
 
-                    int extra = (interp_arg ? 3 : 2);
-                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    int extra = token_count + 2;
+                    char** new_argv = malloc((argc + extra + 1) * sizeof(char*));
                     if (new_argv) {
                         int idx = 0;
                         new_argv[idx++] = (char*)rinterp;
-                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        for (int t = 0; t < token_count; t++) {
+                            new_argv[idx++] = interp_tokens[t];
+                        }
                         new_argv[idx++] = (char*)rpath;
                         for (int i = 1; i < argc; i++) new_argv[idx++] = eff_argv[i];
-                        new_argv[argc + extra - 1] = NULL;
+                        new_argv[idx] = NULL;
 
                         int ret = exec_func(rinterp, new_argv, interp_envp);
                         free(new_argv);
@@ -2202,18 +2261,36 @@ int posix_spawn(pid_t* pid, const char* path, const void* file_actions, const vo
                     int interp_is_system = is_system_binary(rinterp);
                     char** safe_envp = ensure_env(envp ? envp : environ, 0, interp_is_system);
 
+                    char* interp_tokens[16];
+                    int token_count = 0;
+                    if (interp_arg) {
+                        char* cur = interp_arg;
+                        while (*cur && token_count < 15) {
+                            while (*cur == ' ' || *cur == '\t') cur++;
+                            if (*cur == '\0') break;
+                            interp_tokens[token_count++] = cur;
+                            while (*cur && *cur != ' ' && *cur != '\t') cur++;
+                            if (*cur) {
+                                *cur = '\0';
+                                cur++;
+                            }
+                        }
+                    }
+
                     int argc = 0;
                     while (argv && argv[argc]) argc++;
 
-                    int extra = (interp_arg ? 3 : 2);
-                    char** new_argv = malloc((argc + extra) * sizeof(char*));
+                    int extra = token_count + 2;
+                    char** new_argv = malloc((argc + extra + 1) * sizeof(char*));
                     if (new_argv) {
                         int idx = 0;
                         new_argv[idx++] = (char*)rinterp;
-                        if (interp_arg) new_argv[idx++] = interp_arg;
+                        for (int t = 0; t < token_count; t++) {
+                            new_argv[idx++] = interp_tokens[t];
+                        }
                         new_argv[idx++] = (char*)rpath;
                         for (int i = 1; i < argc; i++) new_argv[idx++] = argv[i];
-                        new_argv[argc + extra - 1] = NULL;
+                        new_argv[idx] = NULL;
 
                         int ret = o_posix_spawn(pid, rinterp, file_actions, attrp, new_argv, safe_envp);
                         free(new_argv);

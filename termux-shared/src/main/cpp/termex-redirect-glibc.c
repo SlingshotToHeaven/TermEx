@@ -136,23 +136,57 @@ static void init_redirect_glibc(void) {
     }
 }
 
+static const char* collapse_dots_and_slashes(const char* path, char* out, size_t out_size) {
+    if (!path || !out || out_size < 2) return path;
+    if (!strstr(path, "//") && !strstr(path, "/./") && strncmp(path, "./", 2) != 0) {
+        return path;
+    }
+    const char* src = path;
+    char* dst = out;
+    char* end = out + out_size - 1;
+
+    if (*src == '/') {
+        *dst++ = '/';
+        while (*src == '/') src++;
+    }
+
+    while (*src && dst < end) {
+        // Skip "/." followed by '/' or '\0'
+        if (*src == '.' && (src[1] == '/' || src[1] == '\0') && (dst == out || *(dst - 1) == '/')) {
+            src++;
+            if (*src == '/') src++;
+            continue;
+        }
+        if (*src == '/' && dst > out && *(dst - 1) == '/') {
+            src++;
+            continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+    return out;
+}
+
 static const char* redirect_path_glibc(const char* path, char* buffer, size_t bufsize) {
     if (!path || current_app_dir_len == 0) return path;
 
+    char clean_buf[1024];
+    const char* norm_path = collapse_dots_and_slashes(path, clean_buf, sizeof(clean_buf));
+
     // 0. Universal Path De-duplication: detect and unpack path doubling
     // e.g. <prefix>/data/data/com.termux/... or <prefix>/data/user/.../com.termux/...
-    const char* embedded = strstr(path + 1, "/data/data/com.termux");
-    if (!embedded) embedded = strstr(path + 1, "/data/data/com.termex");
-    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termux");
-    if (!embedded) embedded = strstr(path + 1, "/data/user/0/com.termex");
+    const char* embedded = strstr(norm_path + 1, "/data/data/com.termux");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/data/com.termex");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/user/0/com.termux");
+    if (!embedded) embedded = strstr(norm_path + 1, "/data/user/0/com.termex");
     if (embedded) {
-        path = embedded;
+        norm_path = embedded;
     }
 
-    char c0 = path[0];
+    char c0 = norm_path[0];
     if (c0 != '/' && c0 != '.' && c0 != 'd' && c0 != 't' && c0 != 'u' && c0 != 'b') return path;
 
-    const char* p = path;
+    const char* p = norm_path;
     while (p[0] == '.' && p[1] == '/') {
         p += 2;
         while (*p == '/') p++;
@@ -238,54 +272,61 @@ static const char* redirect_path_glibc(const char* path, char* buffer, size_t bu
 static ssize_t virtualize_returned_path_glibc(char* buf, ssize_t len, size_t bufsiz) {
     if (len <= 0 || !buf || current_app_dir_len == 0) return len;
 
+    char tmp[1024];
+    size_t in_len = (size_t)len < sizeof(tmp) - 1 ? (size_t)len : sizeof(tmp) - 1;
+    memcpy(tmp, buf, in_len);
+    tmp[in_len] = '\0';
+
     const char* matched_prefix = NULL;
     size_t matched_prefix_len = 0;
 
     // 1. Match current_app_dir (e.g. /data/user/10/com.termex or /data/data/com.termex)
-    if ((size_t)len >= current_app_dir_len && strncmp(buf, current_app_dir, current_app_dir_len) == 0 &&
-        (buf[current_app_dir_len] == '\0' || buf[current_app_dir_len] == '/')) {
+    if (in_len >= current_app_dir_len && strncmp(tmp, current_app_dir, current_app_dir_len) == 0 &&
+        (tmp[current_app_dir_len] == '\0' || tmp[current_app_dir_len] == '/')) {
         matched_prefix = current_app_dir;
         matched_prefix_len = current_app_dir_len;
     }
     // 2. Match /data/data/com.termex
-    else if ((size_t)len >= TARGET_LEN3 && strncmp(buf, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
-             (buf[TARGET_LEN3] == '\0' || buf[TARGET_LEN3] == '/')) {
+    else if (in_len >= TARGET_LEN3 && strncmp(tmp, TARGET_PREFIX3, TARGET_LEN3) == 0 &&
+             (tmp[TARGET_LEN3] == '\0' || tmp[TARGET_LEN3] == '/')) {
         matched_prefix = TARGET_PREFIX3;
         matched_prefix_len = TARGET_LEN3;
     }
     // 3. Match /data/user/0/com.termex
-    else if ((size_t)len >= TARGET_LEN4 && strncmp(buf, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
-             (buf[TARGET_LEN4] == '\0' || buf[TARGET_LEN4] == '/')) {
+    else if (in_len >= TARGET_LEN4 && strncmp(tmp, TARGET_PREFIX4, TARGET_LEN4) == 0 &&
+             (tmp[TARGET_LEN4] == '\0' || tmp[TARGET_LEN4] == '/')) {
         matched_prefix = TARGET_PREFIX4;
         matched_prefix_len = TARGET_LEN4;
     }
     // 4. Match /data/user/0/com.termux
-    else if ((size_t)len >= TARGET_LEN2 && strncmp(buf, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
-             (buf[TARGET_LEN2] == '\0' || buf[TARGET_LEN2] == '/')) {
+    else if (in_len >= TARGET_LEN2 && strncmp(tmp, TARGET_PREFIX2, TARGET_LEN2) == 0 &&
+             (tmp[TARGET_LEN2] == '\0' || tmp[TARGET_LEN2] == '/')) {
         matched_prefix = TARGET_PREFIX2;
         matched_prefix_len = TARGET_LEN2;
     }
     // 5. Match /data/user/<id>/com.termux or /data/user/<id>/com.termex
-    else if (strncmp(buf, "/data/user/", 11) == 0) {
-        const char* after = buf + 11;
+    else if (strncmp(tmp, "/data/user/", 11) == 0) {
+        const char* after = tmp + 11;
         while (*after >= '0' && *after <= '9') after++;
         if (*after == '/') {
             if ((strncmp(after + 1, "com.termux", 10) == 0 && (after[11] == '/' || after[11] == '\0')) ||
                 (strncmp(after + 1, "com.termex", 10) == 0 && (after[11] == '/' || after[11] == '\0'))) {
-                matched_prefix = buf;
-                matched_prefix_len = (after + 11) - buf;
+                matched_prefix = tmp;
+                matched_prefix_len = (after + 11) - tmp;
             }
         }
     }
 
     if (matched_prefix && matched_prefix_len > 0) {
-        const char* suffix = buf + matched_prefix_len;
+        size_t suffix_len = in_len - matched_prefix_len;
         char vpath[1024];
-        int n = snprintf(vpath, sizeof(vpath), "%s%s", TARGET_PREFIX1, suffix);
+        int n = snprintf(vpath, sizeof(vpath), "%s%.*s", TARGET_PREFIX1, (int)suffix_len, tmp + matched_prefix_len);
         if (n > 0) {
-            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz - 1;
+            size_t to_copy = (size_t)n < bufsiz ? (size_t)n : bufsiz;
             memcpy(buf, vpath, to_copy);
-            buf[to_copy] = '\0';
+            if (to_copy < bufsiz) {
+                buf[to_copy] = '\0';
+            }
             return (ssize_t)to_copy;
         }
     }
